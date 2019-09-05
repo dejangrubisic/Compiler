@@ -8,25 +8,18 @@
 
 using namespace std;
 
-#define MAX_LENGTH_WORD 10
-
 enum Operations {
     load, store, loadI, add, sub, mult, lshift, rshift, output, nop
 };
 enum State {
-    s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12,
-    s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24,
-    s25, s26, s27, s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, s38,
-    sErr, COMMENT, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, CONSTCOMMA, REGCOMMA };
+    s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14,
+    s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27,
+    s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, s38, s39,
+    sErr, COMMENT, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG,
+    CONSTINTO, REGINTO, REGCOMMA};
 
 static const char *CategoryStr[] = {"MEMOP", "LOADI", "ARITHOP", "OUTPUT", "NOP", "INTO", "COMMA", "CONST", "REG"};
 
-class classWord {
-    int category;
-    std::string lexeme; //TODO: maybe try this with char[Max_length_word]
-    classWord(int cat, std::string &lex) : category(cat), lexeme(lex) {}
-
-};
 
 
 class instruction {
@@ -39,73 +32,88 @@ class instruction {
     }
 };
 
-State processCharacter(State s, char new_char, string &lexeme);
-
-
+State nextState(State s, char new_char, string &lexeme);
+list<pair<State, string>> processLine(string line, int current_line);
 
 // FUNCTIONS
 
-bool scan(char *filename, int total_lines = 10) {
-    cout << "SCAN" << endl;
+bool scan(char *filename) {
 
     ifstream input_stream(filename, ifstream::in);
     string line;
-    string lexeme;
     int current_line = 1;
-
-    list <array<int, 3>> error_lines;
-    State s = s0, s_prev;
+    list< list < pair<State, string> > > result;
 
     if (!input_stream) cerr << "Cannot open input file";
 
-    while (getline(input_stream, line) && current_line < total_lines) {
-        cout << current_line << ". " << line << endl;
+    while (getline(input_stream, line)) {
 
-        lexeme.clear();
-        s = s0;
-
-        for (int char_pos = 0; char_pos < int(line.length()); ++char_pos) {
-            s_prev = s;
-            s = processCharacter(s, line[char_pos], lexeme);
-
-            if (s >= MEMOP) {
-                if (s == CONSTCOMMA || s == REGCOMMA) {
-                    lexeme.pop_back();
-                    cout << current_line << " " << CategoryStr[s + (REG - REGCOMMA) - MEMOP] << " " << lexeme << endl;
-                    cout << current_line << " " << CategoryStr[COMMA - MEMOP] << " " << ',' << endl;
-                }else{
-                    cout << current_line << " " << CategoryStr[s - MEMOP] << " " << lexeme << endl;
-                }
-
-                s = s0;
-                lexeme.clear();
-            } else if (s == sErr) {
-                cout << "ERROR: line " << current_line << ", " << (char_pos + 1) <<
-                     " ---> state: " << s_prev << endl;
-                error_lines.push_back(array < int, 3 > {current_line, char_pos + 1, s_prev});
-                break;
-            } else if (s == COMMENT) {
-                break;
-            }
-
-        }
+//        cout << "LINE: " << line << endl;
+        result.push_back( processLine(line, current_line) );
 
 
         current_line++;
     }
-
+    cout << --current_line << ": < ENDFILE  , \"\" >" << endl;
+    if (current_line == 1){
+        cout << "WARNING: ILOC file contained no operations." << endl;
+    }
 
     return true;
 }
 
-State processCharacter(State s, char new_char, string &lexeme) {
+list<pair<State, string>> processLine(string line, int current_line){
+    string lexeme;
+    State s = s0;
+    list< pair<State, string> > tokens;
 
-//    cout << "s=" << s << " c=" << new_char <<endl;
-    lexeme.push_back(new_char);
+    line.push_back('\n');
+
+    for (int char_pos = 0; char_pos < int(line.length()); ++char_pos) {
+//        cout << s <<"->";
+        s = nextState(s, line[char_pos], lexeme);
+//        cout << s << endl;
+
+        if (s >= MEMOP) {
+            if ( s <= REG){
+                cout << current_line << ": < " << CategoryStr[s - MEMOP] << "\t, \"" << lexeme << "\" >"<< endl;
+                tokens.push_back(make_pair(s, lexeme));
+
+            }else if(s == CONSTINTO || s == REGINTO) {
+                cout << current_line << ": < " << ((s == CONSTINTO)?"CONST":"REG") << "\t, \"" << lexeme << "\" >" << endl;
+                cout << current_line << ": < INTO\t, \"=>\" >" << endl;
+                tokens.push_back(make_pair(s, lexeme));
+                tokens.push_back(make_pair(INTO, "=>"));
+
+            }else if (s == REGCOMMA) {
+                cout << current_line << ": < REG\t, \"" << lexeme <<"\" >"<< endl;
+                cout << current_line << ": < COMMA\t, \",\" >" << endl;
+                tokens.push_back(make_pair(s, lexeme));
+                tokens.push_back(make_pair(COMMA, ","));
+            }
+            s = s0;
+
+        } else if (s == sErr) {
+            cout << "Lexical error: " << current_line << ": \"" << lexeme <<
+                 "\" is not a valid word." << endl;
+            tokens.push_front(make_pair(sErr,""));
+            break;
+        } else if (s == COMMENT) {
+            break;
+        }
+
+    }
+    return tokens;
+}
+
+State nextState(State s, char new_char, string &lexeme) {
+
 
     switch (s) {
 
         case s0:
+            lexeme.clear();
+            lexeme.push_back(new_char);
             if (new_char == 's') {
                 s = s1;
             } else if (new_char == 'l') {
@@ -124,18 +132,19 @@ State processCharacter(State s, char new_char, string &lexeme) {
                 s = s34;
             } else if (new_char == ',') {
                 s = COMMA;
-            } else if (new_char == ' ') {
+            } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 s = s0;
             } else if (new_char >= '0' && new_char <= '9') {
-                s = s36;
+                s = s35;
             } else if (new_char == '/') {
-                s = s38;
+                s = s37;
             } else {
                 s = sErr;
             }
             break;
 
         case s1:
+            lexeme.push_back(new_char);
             if (new_char == 't') {
                 s = s2;
             } else if (new_char == 'u') {
@@ -146,6 +155,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s2:
+            lexeme.push_back(new_char);
             if (new_char == 'o') {
                 s = s3;
             } else {
@@ -154,6 +164,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s3:
+            lexeme.push_back(new_char);
             if (new_char == 'r') {
                 s = s4;
             } else {
@@ -162,6 +173,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s4:
+            lexeme.push_back(new_char);
             if (new_char == 'e') {
                 s = s5;
             } else {
@@ -170,14 +182,16 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s5:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = MEMOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s6:
+            lexeme.push_back(new_char);
             if (new_char == 'b') {
                 s = s7;
             } else {
@@ -186,14 +200,16 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s7:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = ARITHOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s8:
+            lexeme.push_back(new_char);
             if (new_char == 'o') {
                 s = s9;
             } else if (new_char == 's') {
@@ -204,6 +220,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s9:
+            lexeme.push_back(new_char);
             if (new_char == 'a') {
                 s = s10;
             } else {
@@ -212,6 +229,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s10:
+            lexeme.push_back(new_char);
             if (new_char == 'd') {
                 s = s11;
             } else {
@@ -222,32 +240,38 @@ State processCharacter(State s, char new_char, string &lexeme) {
         case s11:
             if (new_char == 'I') {
                 s = s12;
-            } else if (new_char == ' ') {
+                lexeme.push_back(new_char);
+            } else if (new_char == ' ' || new_char == '\t') {
                 s = MEMOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s12:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = LOADI;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s13:
+            lexeme.push_back(new_char);
             if (new_char == 's') {
                 s = s14;
             } else if (new_char >= '0' && new_char <= '9') {
-                s = s37;
+                s = s36;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s14:
+            lexeme.push_back(new_char);
             if (new_char == 'h') {
                 s = s15;
             } else {
@@ -256,6 +280,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s15:
+            lexeme.push_back(new_char);
             if (new_char == 'i') {
                 s = s16;
             } else {
@@ -264,6 +289,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s16:
+            lexeme.push_back(new_char);
             if (new_char == 'f') {
                 s = s17;
             } else {
@@ -272,6 +298,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s17:
+            lexeme.push_back(new_char);
             if (new_char == 't') {
                 s = s18;
             } else {
@@ -280,14 +307,16 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s18:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = ARITHOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s19:
+            lexeme.push_back(new_char);
             if (new_char == 'u') {
                 s = s20;
             } else {
@@ -296,6 +325,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s20:
+            lexeme.push_back(new_char);
             if (new_char == 'l') {
                 s = s21;
             } else {
@@ -304,6 +334,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s21:
+            lexeme.push_back(new_char);
             if (new_char == 't') {
                 s = s18;
             } else {
@@ -312,6 +343,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s22:
+            lexeme.push_back(new_char);
             if (new_char == 'd') {
                 s = s23;
             } else {
@@ -320,6 +352,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s23:
+            lexeme.push_back(new_char);
             if (new_char == 'd') {
                 s = s24;
             } else {
@@ -328,14 +361,16 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s24:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = ARITHOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s25:
+            lexeme.push_back(new_char);
             if (new_char == 'o') {
                 s = s26;
             } else {
@@ -344,6 +379,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s26:
+            lexeme.push_back(new_char);
             if (new_char == 'p') {
                 s = s27;
             } else {
@@ -352,14 +388,16 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s27:
-            if (new_char == ' ' || new_char == '\n') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 s = NOP;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s28:
+            lexeme.push_back(new_char);
             if (new_char == 'u') {
                 s = s29;
             } else {
@@ -368,6 +406,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s29:
+            lexeme.push_back(new_char);
             if (new_char == 't') {
                 s = s30;
             } else {
@@ -376,6 +415,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s30:
+            lexeme.push_back(new_char);
             if (new_char == 'p') {
                 s = s31;
             } else {
@@ -384,6 +424,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s31:
+            lexeme.push_back(new_char);
             if (new_char == 'u') {
                 s = s32;
             } else {
@@ -392,6 +433,7 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s32:
+            lexeme.push_back(new_char);
             if (new_char == 't') {
                 s = s33;
             } else {
@@ -400,64 +442,80 @@ State processCharacter(State s, char new_char, string &lexeme) {
             break;
 
         case s33:
-            if (new_char == ' ') {
+            if (new_char == ' ' || new_char == '\t') {
                 s = OUTPUT;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
         case s34:
+            lexeme.push_back(new_char);
             if (new_char == '>') {
-                s = s35;
-            } else {
-                s = sErr;
-            }
-            break;
-
-        case s35:   //TODO: Check if there has to be ' ' after =>, if not merge s35 to s34
-            if (new_char == ' ') {
                 s = INTO;
             } else {
                 s = sErr;
             }
             break;
 
-        case s36: // Handle Constant
+        case s35: // Handle Constant
             if (new_char >= '0' && new_char <= '9') {
-                s = s36;
-            } else if (new_char == ' ') {
+                s = s35;
+                lexeme.push_back(new_char);
+            } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 s = CONST;
-            } else if (new_char == ',') {
-                s = CONSTCOMMA;
+            } else if (new_char == '='){
+                s = s38;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
-        case s37: // Handle Register
+        case s36: // Handle Register
             if (new_char >= '0' && new_char <= '9') {
-                s = s37;
-            } else if (new_char == ' ') {
+                s = s36;
+                lexeme.push_back(new_char);
+            } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 s = REG;
             } else if (new_char == ',') {
                 s = REGCOMMA;
+            } else if (new_char == '='){
+                s = s39;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
-        case s38: // Handle Comments
+        case s37: // Handle Comments
             if (new_char == '/') {
                 s = COMMENT;
             } else {
                 s = sErr;
+                lexeme.push_back(new_char);
+            }
+            break;
+        case s38: // Handle number=>
+            if ( new_char == '>'){
+                s = CONSTINTO;
+            }else{
+                s = sErr;
+                lexeme.push_back(new_char);
+            }
+            break;
+        case s39: // Handle Reg=>
+            if ( new_char == '>'){
+                s = REGINTO;
+            }else{
+                s = sErr;
+                lexeme.push_back(new_char);
             }
             break;
         default:
             s = sErr;
     }
 
-//    cout<< "new state: "<< s <<endl;
     return s;
 }
 
@@ -480,7 +538,6 @@ int main(int argc, char *argv[]) {
 
         case 3:
             if (strcmp(argv[1], "-s") == 0) {
-                cout << "Read File Specified" << endl;
                 scan(argv[2]);
 
             } else if (strcmp(argv[1], "-p") == 0) {
