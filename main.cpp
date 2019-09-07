@@ -10,22 +10,20 @@
 
 using namespace std;
 
-enum Operation{ load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err};
-static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mult", "lshift", "rshift", "output", "nop"};
-
-
 enum State {
     s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14,
     s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27,
-    s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, s38, s39,
-    sErr, COMMENT, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST,
-    REG, CONSTINTO, REGINTO, REGCOMMA};
+    s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, sComma, sErr};
 
-static const char *CategoryStr[] = {"MEMOP", "LOADI", "ARITHOP", "OUTPUT", "NOP", "INTO", "COMMA", "CONST", "REG"};
+enum Category {EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT};
+static const char *CategoryStr[] = { "EMPTY", "MEMOP", "LOADI", "ARITHOP", "OUTPUT", "NOP", "INTO", "COMMA", "CONST", "REG"};
+
+enum Operation{ load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err};
+static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mult", "lshift", "rshift", "output", "nop"};
 
 struct InctructionIR{
     Operation opcode;
-    int line;
+    int line_num;
     // 0 - NU, 1 - PR, 2 - VR, 3 - SR
     int registers[3][4];
     int constant;
@@ -51,10 +49,11 @@ enum InputMode{ s, p, r, h};
 
 int strToInt(const string &str);
 InstructionBlock scan(char * filename, bool check_semantics, bool display_tokens);
-vector<pair<State, string>> processLine(string line, int current_line, bool display_tokens);
-State nextState(State s, char new_char, string &lexeme);
-InctructionIR parse(const vector < pair<State, string> > &words , int line);
-InctructionIR checkSemantics(const vector < pair<State, string> > &words, const vector<State> grammar, int line);
+vector<pair<Category, string>> processLine(string line, int line_num, bool display_tokens);
+pair< State, Category> nextState(State state, char new_char, string &lexeme);
+InctructionIR parse(const vector < pair<Category, string> > &words , int line_num);
+InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > words, int line_num);
+InctructionIR checkSemantics(const vector < pair<Category, string> > &words, const vector<Category> grammar, int line_num);
 
 // HELPER FUNCTIONS
 
@@ -83,6 +82,9 @@ pair<InputMode, char *> manageInput(int argc, char *argv[]){
 
     return input;
 }
+
+// If error happen it gets whole word as error word
+void takeErrWord(int line_num, string &line, int &char_pos, string &err_word);
 
 // strToInt - converts string(const | r+const) to int
 int strToInt(const string &str) {
@@ -133,9 +135,9 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
     if (!input_stream) cerr << "Cannot open input file: \"" << filename << "\"" << endl;
 
     string line;
-    int current_line = 0;
+    int line_num = 0;
     int inst_count = 0;
-    vector < pair<State, string> > result;
+    vector < pair<Category, string> > result;
 
     InctructionIR inst;
     InstructionBlock block;
@@ -144,7 +146,7 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 
     while (getline(input_stream, line)) {
 //        cout << "LINE: " << line << endl;
-        result = processLine(line, ++current_line, display_tokens);
+        result = processLine(line, ++line_num, display_tokens);
 
         if(result.empty())
             continue;
@@ -153,7 +155,7 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 
         // Parse Part
         if(check_semantics){
-            inst = parse(result, current_line);
+            inst = parse(result, line_num);
 
             if( inst.opcode != err ){
                 if(error_count == 0)
@@ -166,14 +168,14 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
     }
 
     if(display_tokens){
-        cout << current_line << ": < ENDFILE  , \"\" >" << endl;
+        cout << line_num << ": < ENDFILE  , \"\" >" << endl;
     }
 
     if(check_semantics){
         if(error_count == 0){
             cout << endl << "Parse succeeded, finding "<< inst_count - error_count <<" ILOC operations." << endl;
         }else{
-            cerr << endl << "Parser found "<< error_count <<" Syntax errors in " << current_line <<" lines of input." << endl;
+            cerr << endl << "Parser found "<< error_count <<" Syntax errors in " << line_num <<" lines of input." << endl;
         }
     }
 
@@ -186,64 +188,63 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 }
 
 // processLine - creates vector of tokens(Category, string)
-vector<pair<State, string>> processLine(string line, int current_line, bool display_tokens){
-    string lexeme;
-    State s = s0;
-    vector< pair<State, string> > tokens;
+vector<pair<Category, string>> processLine(string line, int line_num, bool display_tokens){
+
+    string lexeme, err_str;
+    pair< State, Category > s;
+    vector< pair<Category, string> > tokens;
     ostringstream stream;
-    line.push_back('\n');
 
 //    cout << "PROCSS LINE: " << line;
+    //Initialize first state
+    s.first = s0;
+    line.push_back('\n');
+
 
     for (int char_pos = 0; char_pos < int(line.length()); ++char_pos) {
 //        cout << s <<"->";
-        s = nextState(s, line[char_pos], lexeme);
+        s = nextState(s.first, line[char_pos], lexeme);
 //        cout << s << endl;
 
-        if (s >= MEMOP) {
-            if ( s <= REG){
-                stream << current_line << ": < " << CategoryStr[s - MEMOP] << "\t, \"" << lexeme << "\" >"<< endl;
-                tokens.push_back(make_pair(s, lexeme));
+        if ( s.first != sErr ){
+            if( s.second != EMPTY ){
+                // Category {EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT};
+                if (s.second == COMMENT) {
+                    break;
+                }
+                else{   //ALL OPERATIONS, REG, CONST
 
-            }else if(s == CONSTINTO) {
-                stream << current_line << ": < CONST\t, \"" << lexeme << "\" >" << endl;
-                stream << current_line << ": < INTO\t, \"=>\" >" << endl;
-                tokens.push_back(make_pair(CONST, lexeme));
-                tokens.push_back(make_pair(INTO, "=>"));
+                    stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >"<< endl;
+                    tokens.push_back(make_pair(s.second, lexeme));
 
-            }else if(s == REGINTO) {
-                stream << current_line << ": < REG\t, \"" << lexeme << "\" >" << endl;
-                stream << current_line << ": < INTO\t, \"=>\" >" << endl;
-                tokens.push_back(make_pair(REG, lexeme));
-                tokens.push_back(make_pair(INTO, "=>"));
-
-            }else if (s == REGCOMMA) {
-                stream << current_line << ": < REG\t, \"" << lexeme <<"\" >"<< endl;
-                stream << current_line << ": < COMMA\t, \",\" >" << endl;
-                tokens.push_back(make_pair(REG, lexeme));
-                tokens.push_back(make_pair(COMMA, ","));
+                    if(s.second == REG && s.first == sComma){
+                        stream << line_num << ": < COMMA\t, \",\" >" << endl;
+                        tokens.push_back(make_pair(COMMA, ","));
+                        s.first = s0;
+                    }
+                }
             }
-            s = s0;
 
-        } else if (s == sErr) {
-
-            while(line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n'){
-                lexeme.push_back(line[++char_pos]);
-            }
-            if(line[char_pos] == '\n')
-                lexeme.pop_back();
-
-            cerr << "ERROR: " << current_line << ": Lexical: \"" << lexeme <<
-                 "\" is not a valid word." << endl;
-
-            tokens.push_back(make_pair(sErr, lexeme));
-            s = s0;
-
-//            break;
-
-        } else if (s == COMMENT ) {
-            break;
         }
+        else{ // Error States
+            if( s.second != EMPTY ){ //Accept lexeme[0:n-1] and make err message
+                err_str = lexeme;
+                lexeme.pop_back();  // word you accept
+                stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >"<< endl;
+                tokens.push_back(make_pair(s.second, lexeme));
+
+                takeErrWord(line_num, line, char_pos, err_str);
+                tokens.push_back(make_pair(EMPTY, err_str));
+                s.first = s0;
+            }
+            else{ // make err message
+                takeErrWord(line_num, line, char_pos, lexeme);
+                tokens.push_back(make_pair(EMPTY, lexeme));
+                s.first = s0;
+            }
+        }
+
+
 
     }
     if(display_tokens){
@@ -252,87 +253,105 @@ vector<pair<State, string>> processLine(string line, int current_line, bool disp
     return tokens;
 }
 
+void takeErrWord(int line_num, string &line, int &char_pos, string &err_word){
+
+    while(line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n'){
+        err_word.push_back(line[++char_pos]);
+    }
+    if(line[char_pos] == '\n')
+        err_word.pop_back();
+
+    cerr << "ERROR: " << line_num << ": Lexical: \"" << err_word <<
+         "\" is not a valid word." << endl;
+
+    return;
+}
+
+
 // nextState - DFA of trasitions
-State nextState(State s, char new_char, string &lexeme) {
+pair< State, Category> nextState( State state, char new_char, string &lexeme) {
 
+    Category cat = EMPTY;
 
-    switch (s) {
+    switch (state) {
 
         case s0:
             lexeme.clear();
             lexeme.push_back(new_char);
             if (new_char == 's') {
-                s = s1;
+                state = s1;
             } else if (new_char == 'l') {
-                s = s8;
+                state = s8;
             } else if (new_char == 'r') {
-                s = s13;
+                state = s13;
             } else if (new_char == 'm') {
-                s = s19;
+                state = s19;
             } else if (new_char == 'a') {
-                s = s22;
+                state = s22;
             } else if (new_char == 'n') {
-                s = s25;
+                state = s25;
             } else if (new_char == 'o') {
-                s = s28;
+                state = s28;
             } else if (new_char == '=') {
-                s = s34;
+                state = s34;
             } else if (new_char == ',') {
-                s = COMMA;
+                cat = COMMA;
+                state = s0;
             } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
-                s = s0;
+                state = s0;
             } else if (new_char >= '0' && new_char <= '9') {
-                s = s35;
+                state = s35;
             } else if (new_char == '/') {
-                s = s37;
+                state = s37;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s1:
             lexeme.push_back(new_char);
             if (new_char == 't') {
-                s = s2;
+                state = s2;
             } else if (new_char == 'u') {
-                s = s6;
+                state = s6;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s2:
             lexeme.push_back(new_char);
             if (new_char == 'o') {
-                s = s3;
+                state = s3;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s3:
             lexeme.push_back(new_char);
             if (new_char == 'r') {
-                s = s4;
+                state = s4;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s4:
             lexeme.push_back(new_char);
             if (new_char == 'e') {
-                s = s5;
+                state = s5;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s5:
+        case s5: //store
             if (new_char == ' ' || new_char == '\t') {
-                s = MEMOP;
+                cat = MEMOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -340,17 +359,18 @@ State nextState(State s, char new_char, string &lexeme) {
         case s6:
             lexeme.push_back(new_char);
             if (new_char == 'b') {
-                s = s7;
+                state = s7;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s7:
+        case s7: //sub
             if (new_char == ' ' || new_char == '\t') {
-                s = ARITHOP;
+                cat = ARITHOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -358,49 +378,51 @@ State nextState(State s, char new_char, string &lexeme) {
         case s8:
             lexeme.push_back(new_char);
             if (new_char == 'o') {
-                s = s9;
+                state = s9;
             } else if (new_char == 's') {
-                s = s14;
+                state = s14;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s9:
             lexeme.push_back(new_char);
             if (new_char == 'a') {
-                s = s10;
+                state = s10;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s10:
             lexeme.push_back(new_char);
             if (new_char == 'd') {
-                s = s11;
+                state = s11;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s11:
+        case s11: //load
             if (new_char == 'I') {
-                s = s12;
+                state = s12;
                 lexeme.push_back(new_char);
             } else if (new_char == ' ' || new_char == '\t') {
-                s = MEMOP;
+                cat = MEMOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
 
         case s12:
             if (new_char == ' ' || new_char == '\t') {
-                s = LOADI;
+                cat = LOADI;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -408,11 +430,11 @@ State nextState(State s, char new_char, string &lexeme) {
         case s13:
             lexeme.push_back(new_char);
             if (new_char == 's') {
-                s = s14;
+                state = s14;
             } else if (new_char >= '0' && new_char <= '9') {
-                s = s36;
+                state = s36;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -420,44 +442,45 @@ State nextState(State s, char new_char, string &lexeme) {
         case s14:
             lexeme.push_back(new_char);
             if (new_char == 'h') {
-                s = s15;
+                state = s15;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s15:
             lexeme.push_back(new_char);
             if (new_char == 'i') {
-                s = s16;
+                state = s16;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s16:
             lexeme.push_back(new_char);
             if (new_char == 'f') {
-                s = s17;
+                state = s17;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s17:
             lexeme.push_back(new_char);
             if (new_char == 't') {
-                s = s18;
+                state = s18;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s18:
+        case s18: //rshift, lshift, mult
             if (new_char == ' ' || new_char == '\t') {
-                s = ARITHOP;
+                cat = ARITHOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -465,53 +488,54 @@ State nextState(State s, char new_char, string &lexeme) {
         case s19:
             lexeme.push_back(new_char);
             if (new_char == 'u') {
-                s = s20;
+                state = s20;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s20:
             lexeme.push_back(new_char);
             if (new_char == 'l') {
-                s = s21;
+                state = s21;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s21:
             lexeme.push_back(new_char);
             if (new_char == 't') {
-                s = s18;
+                state = s18;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s22:
             lexeme.push_back(new_char);
             if (new_char == 'd') {
-                s = s23;
+                state = s23;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s23:
             lexeme.push_back(new_char);
             if (new_char == 'd') {
-                s = s24;
+                state = s24;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s24:
+        case s24: //add
             if (new_char == ' ' || new_char == '\t') {
-                s = ARITHOP;
+                cat = ARITHOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -519,26 +543,27 @@ State nextState(State s, char new_char, string &lexeme) {
         case s25:
             lexeme.push_back(new_char);
             if (new_char == 'o') {
-                s = s26;
+                state = s26;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s26:
             lexeme.push_back(new_char);
             if (new_char == 'p') {
-                s = s27;
+                state = s27;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s27:
+        case s27: //nop
             if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
-                s = NOP;
+                cat = NOP;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
@@ -546,157 +571,159 @@ State nextState(State s, char new_char, string &lexeme) {
         case s28:
             lexeme.push_back(new_char);
             if (new_char == 'u') {
-                s = s29;
+                state = s29;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s29:
             lexeme.push_back(new_char);
             if (new_char == 't') {
-                s = s30;
+                state = s30;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s30:
             lexeme.push_back(new_char);
             if (new_char == 'p') {
-                s = s31;
+                state = s31;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s31:
             lexeme.push_back(new_char);
             if (new_char == 'u') {
-                s = s32;
+                state = s32;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s32:
             lexeme.push_back(new_char);
             if (new_char == 't') {
-                s = s33;
+                state = s33;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
-        case s33:
+        case s33: //output
             if (new_char == ' ' || new_char == '\t') {
-                s = OUTPUT;
+                cat = OUTPUT;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
 
-        case s34:
+        case s34: // INTO =>
             lexeme.push_back(new_char);
             if (new_char == '>') {
-                s = INTO;
+                cat = INTO;
+                lexeme = "=>";
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
             }
             break;
 
         case s35: // Handle Constant
             if (new_char >= '0' && new_char <= '9') {
-                s = s35;
+                state = s35;
                 lexeme.push_back(new_char);
             } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
-                s = CONST;
+                cat = CONST;
+                state = s0;
+            } else if (new_char == '/'){
+                cat = CONST;
+                state = s37;
             } else if (new_char == '='){
-                s = s38;
+                state = s34;
+                cat = CONST;
             } else {
-                s = sErr;
+                state = sErr;
+                cat = CONST;
                 lexeme.push_back(new_char);
             }
             break;
 
         case s36: // Handle Register
             if (new_char >= '0' && new_char <= '9') {
-                s = s36;
+                state = s36;
                 lexeme.push_back(new_char);
             } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
-                s = REG;
+                cat = REG;
+                state = s0;
+            }  else if (new_char == '/'){
+                cat = REG;
+                state = s37;
             } else if (new_char == ',') {
-                s = REGCOMMA;
+                cat = REG;
+                state = sComma; // send both REG and COMMA
             } else if (new_char == '='){
-                s = s39;
+                cat = REG;
+                state = s34;
             } else {
-                s = sErr;
+                state = sErr;
+                cat = REG;
                 lexeme.push_back(new_char);
             }
             break;
-        case s37: // Handle Comments
+        case s37: // Handle COMMENTs
             if (new_char == '/') {
-                s = COMMENT;
+                cat = COMMENT;
+                state = s0;
             } else {
-                s = sErr;
+                state = sErr;
                 lexeme.push_back(new_char);
             }
             break;
-        case s38: // Handle number=>
-            if ( new_char == '>'){
-                s = CONSTINTO;
-            }else{
-                s = sErr;
-                lexeme.push_back(new_char);
-            }
-            break;
-        case s39: // Handle Reg=>
-            if ( new_char == '>'){
-                s = REGINTO;
-            }else{
-                s = sErr;
-                lexeme.push_back(new_char);
-            }
-            break;
+
         default:
-            s = sErr;
+            state = sErr;
     }
 
-    return s;
+    return make_pair(state, cat);
 }
 
 // parse - check semantics for every Category
-InctructionIR parse(const vector < pair<State, string> > &words, int line ){
+InctructionIR parse(const vector < pair<Category , string> > &words, int line_num ){
 
     switch (words[0].first){
         case MEMOP:
-            return checkSemantics(words, vector<State>({MEMOP, REG, INTO, REG}), line);
+            return checkSemantics(words, vector<Category>({MEMOP, REG, INTO, REG}), line_num);
 
         case LOADI:
-            return checkSemantics(words, vector<State>({LOADI, CONST, INTO, REG}), line);
+            return checkSemantics(words, vector<Category>({LOADI, CONST, INTO, REG}), line_num);
 
         case ARITHOP:
-            return checkSemantics(words, vector<State>({ARITHOP, REG, COMMA, REG, INTO, REG}), line);
+            return checkSemantics(words, vector<Category>({ARITHOP, REG, COMMA, REG, INTO, REG}), line_num);
 
         case OUTPUT:
-            return checkSemantics(words, vector<State>({OUTPUT, CONST}), line);
+            return checkSemantics(words, vector<Category>({OUTPUT, CONST}), line_num);
 
         case NOP:
-            return checkSemantics(words, vector<State>({NOP}), line);
+            return checkSemantics(words, vector<Category>({NOP}), line_num);
 
         default:
-            cerr << "ERROR: " << line << ": Syntax: Undefined operation \"" << words[0].second <<"\""<< endl;
+            cerr << "ERROR: " << line_num << ": Syntax: Undefined operation \"" << words[0].second <<"\""<< endl;
             return InctructionIR();
     }
 }
 
 // setupInstruction - creates instruction IR from tokens
-InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<State, string> > &words, int line_num){
+InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > words, int line_num){
     // SETUP INSTRUCTION_IR
 
     inst.opcode = strToOperation(words[0].second);
-    inst.line = line_num;
+    inst.line_num = line_num;
     switch (words[0].first){
         case MEMOP:
             inst.registers[0][3] = strToInt(words[1].second);
@@ -725,7 +752,7 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<State, s
 }
 
 // checkSemantics - compare grammar with tokens
-InctructionIR checkSemantics(const vector < pair<State, string> > &words, const vector<State> grammar, int line_num){
+InctructionIR checkSemantics(const vector < pair<Category , string> > &words, const vector<Category> grammar, int line_num){
 
     InctructionIR inst;
     int i;
@@ -734,7 +761,7 @@ InctructionIR checkSemantics(const vector < pair<State, string> > &words, const 
         cerr << "ERROR: " << line_num << ": Syntax: too few words. Format is: ";
 
         for (int i = 0; i < int(grammar.size()) ; ++i) {
-            cout << CategoryStr[grammar[i] - MEMOP] <<" ";
+            cout << CategoryStr[grammar[i]] <<" ";
         }
         cout << endl;
         return inst;
@@ -745,7 +772,7 @@ InctructionIR checkSemantics(const vector < pair<State, string> > &words, const 
 //            cout << words[i].first << " -- gramar: "<< grammar[i] << endl;
         if(words[i].first != grammar[i]){
             cerr << "ERROR: " << line_num << ": Syntax: Invalid word \"" << words[i].second <<
-            "\" Should be: "<< CategoryStr[grammar[i] - MEMOP] << endl;
+            "\" Should be: "<< CategoryStr[grammar[i]] << endl;
             return inst;
         }
     }
