@@ -352,6 +352,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = MEMOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -371,6 +372,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = ARITHOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -413,6 +415,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = MEMOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -423,6 +426,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = LOADI;
                 lexeme.push_back(new_char);
             }
             break;
@@ -481,6 +485,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = ARITHOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -536,6 +541,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = ARITHOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -564,6 +570,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = NOP;
                 lexeme.push_back(new_char);
             }
             break;
@@ -619,18 +626,19 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
+                cat = OUTPUT;
                 lexeme.push_back(new_char);
             }
             break;
 
         case s34: // INTO =>
-            lexeme.push_back(new_char);
+            lexeme = "=>";
             if (new_char == '>') {
                 cat = INTO;
-                lexeme = "=>";
                 state = s0;
             } else {
                 state = sErr;
+                cat = INTO;
             }
             break;
 
