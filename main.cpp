@@ -47,73 +47,44 @@ struct InstructionBlock{
     list< InctructionIR > instructions;
 
 };
+enum InputMode{ s, p, r, h};
 
-InstructionBlock scan(char *filename, bool check_semantics, bool display);
-vector<pair<State, string>> processLine(string line, int current_line, bool display);
+int strToInt(const string &str);
+InstructionBlock scan(char * filename, bool check_semantics, bool display_tokens);
+vector<pair<State, string>> processLine(string line, int current_line, bool display_tokens);
 State nextState(State s, char new_char, string &lexeme);
 InctructionIR parse(const vector < pair<State, string> > &words , int line);
 InctructionIR checkSemantics(const vector < pair<State, string> > &words, const vector<State> grammar, int line);
 
-// FUNCTIONS
+// HELPER FUNCTIONS
 
-InstructionBlock scan(char *filename, bool check_semantics = false, bool display = false) {
+// manageInput - parse command line
+pair<InputMode, char *> manageInput(int argc, char *argv[]){
 
-    ifstream input_stream(filename, ifstream::in);
-    if (!input_stream) cerr << "Cannot open input file";
+    pair<InputMode, char *> input(make_pair(s, argv[argc-1] ));
 
-    string line;
-    int current_line = 0;
-    int inst_count = 0;
-    vector < pair<State, string> > result;
+    if(argc == 2){
+        input.first = p;
+        return input;
+    }
 
-    InctructionIR inst;
-    InstructionBlock block;
-    int error_count = 0;
+    for (int i = 1; i < argc - 1; ++i) {
 
-
-    while (getline(input_stream, line)) {
-//        cout << "LINE: " << line << endl;
-        result = processLine(line, ++current_line, display);
-
-        if(result.empty())
-            continue;
-
-        // Parse Part
-        if(check_semantics){
-            inst = parse(result, current_line);
-
-            if( inst.opcode != err ){
-                inst_count++;
-
-                if(error_count == 0)
-                    block.instructions.push_back(inst);
-
-            }else{
-                error_count++;
-            }
+        if (strcmp(argv[i], "-h") == 0) {
+            input.first = h;
+        } else if (strcmp(argv[i], "-r") == 0 && input.first < r) {
+            input.first = r;
+        } else if (strcmp(argv[i], "-p") == 0 && input.first < p) {
+            input.first = p;
+        } else if (strcmp(argv[i], "-s") == 0 && input.first < s) {
+            input.first = s;
         }
-
     }
 
-    if(display){
-        cout << --current_line << ": < ENDFILE  , \"\" >" << endl;
-    }
-
-    if(error_count == 0){
-        cout << endl << "Parse succeeded, finding "<< inst_count <<" ILOC operations." << endl;
-    }else{
-        cout << endl << "Parser found "<< error_count <<" Syntax errors in " << current_line <<" lines of input." << endl;
-    }
-
-    if (current_line == 1){
-        cout << "WARNING: ILOC file contained no operations." << endl;
-    }
-
-
-    return (error_count == 0) ? block : InstructionBlock();
+    return input;
 }
 
-
+// strToInt - converts string(const | r+const) to int
 int strToInt(const string &str) {
     int n = 0;
     int i = 0;
@@ -127,7 +98,95 @@ int strToInt(const string &str) {
     return n;
 }
 
-vector<pair<State, string>> processLine(string line, int current_line, bool display){
+// strToOperation - converts string to enum Operation
+Operation strToOperation(const string &op){
+
+    if(op == "load")
+        return load;
+    else if(op == "store")
+        return store;
+    else if(op == "loadI")
+        return loadI;
+    else if(op == "add")
+        return add;
+    else if(op == "sub")
+        return sub;
+    else if(op == "mult")
+        return mult;
+    else if(op == "lshift")
+        return lshift;
+    else if(op == "rshift")
+        return rshift;
+    else if(op == "output")
+        return output;
+    else
+        return nop;
+
+}
+
+// MAIN FUNCTIONS
+
+// Scan - creates tokens from input file, check lexical errors, and check_semantics(make IR)
+InstructionBlock scan(char * filename, bool check_semantics = false, bool display_tokens = false) {
+
+    ifstream input_stream(filename, ifstream::in);
+    if (!input_stream) cerr << "Cannot open input file: \"" << filename << "\"" << endl;
+
+    string line;
+    int current_line = 0;
+    int inst_count = 0;
+    vector < pair<State, string> > result;
+
+    InctructionIR inst;
+    InstructionBlock block;
+    int error_count = 0;
+
+
+    while (getline(input_stream, line)) {
+//        cout << "LINE: " << line << endl;
+        result = processLine(line, ++current_line, display_tokens);
+
+        if(result.empty())
+            continue;
+
+        inst_count++;
+
+        // Parse Part
+        if(check_semantics){
+            inst = parse(result, current_line);
+
+            if( inst.opcode != err ){
+                if(error_count == 0)
+                    block.instructions.push_back(inst);
+            }else{
+                error_count++;
+            }
+        }
+
+    }
+
+    if(display_tokens){
+        cout << current_line << ": < ENDFILE  , \"\" >" << endl;
+    }
+
+    if(check_semantics){
+        if(error_count == 0){
+            cout << endl << "Parse succeeded, finding "<< inst_count - error_count <<" ILOC operations." << endl;
+        }else{
+            cerr << endl << "Parser found "<< error_count <<" Syntax errors in " << current_line <<" lines of input." << endl;
+        }
+    }
+
+    if (inst_count == 0){
+        cout << "WARNING: ILOC file contained no operations." << endl;
+    }
+
+
+    return (error_count == 0) ? block : InstructionBlock();
+}
+
+// processLine - creates vector of tokens(Category, string)
+vector<pair<State, string>> processLine(string line, int current_line, bool display_tokens){
     string lexeme;
     State s = s0;
     vector< pair<State, string> > tokens;
@@ -174,7 +233,7 @@ vector<pair<State, string>> processLine(string line, int current_line, bool disp
             if(line[char_pos] == '\n')
                 lexeme.pop_back();
 
-            cout << "ERROR: " << current_line << ": Lexical: \"" << lexeme <<
+            cerr << "ERROR: " << current_line << ": Lexical: \"" << lexeme <<
                  "\" is not a valid word." << endl;
 
             tokens.push_back(make_pair(sErr, lexeme));
@@ -187,12 +246,13 @@ vector<pair<State, string>> processLine(string line, int current_line, bool disp
         }
 
     }
-    if(display){
+    if(display_tokens){
         cout << stream.str();
     }
     return tokens;
 }
 
+// nextState - DFA of trasitions
 State nextState(State s, char new_char, string &lexeme) {
 
 
@@ -606,15 +666,8 @@ State nextState(State s, char new_char, string &lexeme) {
     return s;
 }
 
-
+// parse - check semantics for every Category
 InctructionIR parse(const vector < pair<State, string> > &words, int line ){
-
-//    cout << "PARSE: ";
-
-//    for (int i = 0; i < int(words.size()); ++i) {
-//        cout << words[i].second<<"|";
-//    }
-//    cout << endl;
 
     switch (words[0].first){
         case MEMOP:
@@ -633,37 +686,12 @@ InctructionIR parse(const vector < pair<State, string> > &words, int line ){
             return checkSemantics(words, vector<State>({NOP}), line);
 
         default:
-            cout << "ERROR: " << line << ": Syntax: Undefined operation \"" << words[0].second <<"\""<< endl;
+            cerr << "ERROR: " << line << ": Syntax: Undefined operation \"" << words[0].second <<"\""<< endl;
             return InctructionIR();
     }
 }
 
-
-Operation strToOperation(const string &op){
-
-    if(op == "load")
-        return load;
-    else if(op == "store")
-        return store;
-    else if(op == "loadI")
-        return loadI;
-    else if(op == "add")
-        return add;
-    else if(op == "sub")
-        return sub;
-    else if(op == "mult")
-        return mult;
-    else if(op == "lshift")
-        return lshift;
-    else if(op == "rshift")
-        return rshift;
-    else if(op == "output")
-        return output;
-    else
-        return nop;
-
-}
-
+// setupInstruction - creates instruction IR from tokens
 InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<State, string> > &words, int line_num){
     // SETUP INSTRUCTION_IR
 
@@ -695,13 +723,15 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<State, s
     }
     return inst;
 }
+
+// checkSemantics - compare grammar with tokens
 InctructionIR checkSemantics(const vector < pair<State, string> > &words, const vector<State> grammar, int line_num){
 
     InctructionIR inst;
     int i;
 
     if (words.size() < grammar.size()){
-        cout << "ERROR: " << line_num << ": Syntax: too few words. Format is: ";
+        cerr << "ERROR: " << line_num << ": Syntax: too few words. Format is: ";
 
         for (int i = 0; i < int(grammar.size()) ; ++i) {
             cout << CategoryStr[grammar[i] - MEMOP] <<" ";
@@ -714,40 +744,45 @@ InctructionIR checkSemantics(const vector < pair<State, string> > &words, const 
     for (i = 1; i < int(grammar.size()); ++i) {
 //            cout << words[i].first << " -- gramar: "<< grammar[i] << endl;
         if(words[i].first != grammar[i]){
-            cout << "ERROR: " << line_num << ": Syntax: Invalid word \"" << words[i].second <<
+            cerr << "ERROR: " << line_num << ": Syntax: Invalid word \"" << words[i].second <<
             "\" Should be: "<< CategoryStr[grammar[i] - MEMOP] << endl;
             return inst;
         }
     }
     if(words.size() > grammar.size()){
-        cout << "ERROR: " << line_num << ": Syntax: too many words :\"" << words[i].second <<"\""<<endl;
+        cerr << "ERROR: " << line_num << ": Syntax: too many words :\"" << words[i].second <<"\""<<endl;
         return inst;
     }
 
-//    cout << "GOOD SEMANTICS ++++++++++ "<< endl;
     return  setupInstruction(inst, words, line_num);
 }
 
+// showIR - print IR in human readable form
 void showIR(InstructionBlock ir){
+
+    if(ir.instructions.empty()){
+        cerr << "ERROR: No valid instruction, run terminates." << endl;
+        return;
+    }
 
     for (const InctructionIR &inst : ir.instructions ) {
 
         switch (inst.opcode){
 
             case load:
-                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ] [ " << "[ sr" << inst.registers[2][3] << " ]" << endl;
+                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
                 break;
 
             case store:
-                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ] [ " << "[ sr" << inst.registers[2][3] << " ]" << endl;
+                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
                 break;
 
             case loadI:
-                cout << "loadI\t [ val " << inst.constant << " ], [ ] [ " << "[ sr" << inst.registers[2][3] << " ]" << endl;
+                cout << "loadI\t [ val " << inst.constant << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
                 break;
 
             case output:
-                cout << OperationStr[inst.opcode] <<"\t [ val" << inst.constant << " ], [ ] [ ]" << endl;
+                cout << OperationStr[inst.opcode] <<"\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
                 break;
 
             case nop:
@@ -767,39 +802,32 @@ void showIR(InstructionBlock ir){
 
 int main(int argc, char *argv[]) {
 
-    switch (argc) {
-        case 1:
-            //IF NO ARGS, THEN -P
-            cout << "Make IR from File Specified" << endl;
+    pair< InputMode , char * > input = manageInput(argc, argv);
+    InstructionBlock ir;
 
+    switch (input.first){
+
+        case h:
+            cout << "Optional flags:\n" <<
+                    "        -h       prints this message\n" <<
+                    "        -s       prints tokens in token stream\n" <<
+                    "        -p       invokes parser and reports on success or failure\n" <<
+                    "        -r       prints human readable version of parser's IR\n";
             break;
 
-        case 2:
-            if (strcmp(argv[1], "-h") == 0) {
-                cout << "Command Line Arguments" << endl;
-                cout << "IMPLEMENT OTHER ARGUMENTS" << endl;
-
-            }
+        case r:
+            ir = scan(input.second, true, false);
+            showIR(ir);
             break;
 
-        case 3:
-            if (strcmp(argv[1], "-s") == 0) {
-                scan(argv[2], false, true);
-
-            } else if (strcmp(argv[1], "-p") == 0) {
-                scan(argv[2], true, false);
-
-            } else if (strcmp(argv[1], "-r") == 0) {
-                InstructionBlock ir;
-                ir = scan(argv[2], true, false);
-                showIR(ir);
-            }
+        case p:
+            scan(input.second, true, false);
             break;
 
-        default: //TODO: IF SPECIFIED MORE -H -R -P -S IMPLEMENT IN THAT PRIORITY
-            cout << "Error: Input Format is bad. Type ./412fe -h for more information" << endl;
+        case s:
+            scan(input.second, false, true);
+            break;
     }
-
 
     return 0;
 }
