@@ -47,13 +47,17 @@ struct InstructionBlock{
 };
 enum InputMode{ s, p, r, h};
 
+
+pair<InputMode, char *> manageInput(int argc, char *argv[]);
 int strToInt(const string &str);
-InstructionBlock scan(char * filename, bool check_semantics, bool display_tokens);
-vector<pair<Category, string>> processLine(string line, int line_num, bool display_tokens);
+void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word);
+void showIR(const InstructionBlock &ir);
+InstructionBlock scan(char *filename, bool check_semantics, bool display_tokens);
+vector<pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens);
 pair< State, Category> nextState(State state, char new_char, string &lexeme);
 InctructionIR parse(const vector < pair<Category, string> > &words , int line_num);
-InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > words, int line_num);
-InctructionIR checkSemantics(const vector < pair<Category, string> > &words, const vector<Category> grammar, int line_num);
+InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > &words, int line_num);
+InctructionIR checkSemantics(const vector < pair<Category, string> > &words, const vector<Category> &grammar, int line_num);
 
 // HELPER FUNCTIONS
 
@@ -82,9 +86,6 @@ pair<InputMode, char *> manageInput(int argc, char *argv[]){
 
     return input;
 }
-
-// If error happen it gets whole word as error word
-void takeErrWord(int line_num, string &line, int &char_pos, string &err_word);
 
 // strToInt - converts string(const | r+const) to int
 int strToInt(const string &str) {
@@ -126,6 +127,64 @@ Operation strToOperation(const string &op){
 
 }
 
+// If error happen it gets whole word as error word
+void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word){
+
+    while(line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n'){
+        err_word.push_back(line[++char_pos]);
+    }
+    if(line[char_pos] == ' ' || line[char_pos] == '\t' || line[char_pos] == '\n')
+        err_word.pop_back();
+
+    cerr << "ERROR: " << line_num << ": Lexical: \"" << err_word <<
+         "\" is not a valid word." << endl;
+
+    return;
+}
+
+// showIR - print IR in human readable form
+void showIR(const InstructionBlock &ir){
+
+    if(ir.instructions.empty()){
+        cerr << "ERROR: Not valid instructions, run terminates." << endl;
+        return;
+    }
+
+    for (const InctructionIR &inst : ir.instructions ) {
+
+        switch (inst.opcode){
+
+            case load:
+                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                break;
+
+            case store:
+                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                break;
+
+            case loadI:
+                cout << "loadI\t [ val " << inst.constant << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                break;
+
+            case output:
+                cout << OperationStr[inst.opcode] <<"\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
+                break;
+
+            case nop:
+                cout << "nop\t [ ], [ ], [ ]" << endl;
+                break;
+
+            default: //
+                cout << OperationStr[inst.opcode] <<"\t [ sr" << inst.registers[0][3] << " ], [ sr"
+                     << inst.registers[1][3] << " ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                break;
+        }
+
+    }
+
+}
+
+
 // MAIN FUNCTIONS
 
 // Scan - creates tokens from input file, check lexical errors, and check_semantics(make IR)
@@ -146,6 +205,7 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 
     while (getline(input_stream, line)) {
 //        cout << "LINE: " << line << endl;
+        line.push_back('\n');
         result = processLine(line, ++line_num, display_tokens);
 
         if(result.empty())
@@ -188,7 +248,7 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 }
 
 // processLine - creates vector of tokens(Category, string)
-vector<pair<Category, string>> processLine(string line, int line_num, bool display_tokens){
+vector<pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens){
 
     string lexeme, err_str;
     pair< State, Category > s;
@@ -198,7 +258,7 @@ vector<pair<Category, string>> processLine(string line, int line_num, bool displ
 //    cout << "PROCSS LINE: " << line;
     //Initialize first state
     s.first = s0;
-    line.push_back('\n');
+//    line.push_back('\n');
 
 
     for (int char_pos = 0; char_pos < int(line.length()); ++char_pos) {
@@ -252,21 +312,6 @@ vector<pair<Category, string>> processLine(string line, int line_num, bool displ
     }
     return tokens;
 }
-
-void takeErrWord(int line_num, string &line, int &char_pos, string &err_word){
-
-    while(line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n'){
-        err_word.push_back(line[++char_pos]);
-    }
-    if(line[char_pos] == '\n')
-        err_word.pop_back();
-
-    cerr << "ERROR: " << line_num << ": Lexical: \"" << err_word <<
-         "\" is not a valid word." << endl;
-
-    return;
-}
-
 
 // nextState - DFA of trasitions
 pair< State, Category> nextState( State state, char new_char, string &lexeme) {
@@ -635,12 +680,13 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s34: // INTO =>
-            lexeme = "=>";
             if (new_char == '>') {
                 cat = INTO;
+                lexeme = "=>";
                 state = s0;
             } else {
                 state = sErr;
+                lexeme.push_back(new_char);
             }
             break;
 
@@ -689,7 +735,8 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
         case s37: // Handle COMMENTs
             if (new_char == '/') {
                 cat = COMMENT;
-                state = s0;
+
+
             } else {
                 state = sErr;
                 lexeme.push_back(new_char);
@@ -729,7 +776,7 @@ InctructionIR parse(const vector < pair<Category , string> > &words, int line_nu
 }
 
 // setupInstruction - creates instruction IR from tokens
-InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > words, int line_num){
+InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > &words, int line_num){
     // SETUP INSTRUCTION_IR
 
     inst.opcode = strToOperation(words[0].second);
@@ -762,7 +809,7 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category
 }
 
 // checkSemantics - compare grammar with tokens
-InctructionIR checkSemantics(const vector < pair<Category , string> > &words, const vector<Category> grammar, int line_num){
+InctructionIR checkSemantics(const vector < pair<Category , string> > &words, const vector<Category> &grammar, int line_num){
 
     InctructionIR inst;
     int i;
@@ -792,48 +839,6 @@ InctructionIR checkSemantics(const vector < pair<Category , string> > &words, co
     }
 
     return  setupInstruction(inst, words, line_num);
-}
-
-// showIR - print IR in human readable form
-void showIR(InstructionBlock ir){
-
-    if(ir.instructions.empty()){
-        cerr << "ERROR: Not valid instructions, run terminates." << endl;
-        return;
-    }
-
-    for (const InctructionIR &inst : ir.instructions ) {
-
-        switch (inst.opcode){
-
-            case load:
-                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-
-            case store:
-                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-
-            case loadI:
-                cout << "loadI\t [ val " << inst.constant << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-
-            case output:
-                cout << OperationStr[inst.opcode] <<"\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
-                break;
-
-            case nop:
-                cout << "nop\t [ ], [ ], [ ]" << endl;
-                break;
-
-            default: //
-                cout << OperationStr[inst.opcode] <<"\t [ sr" << inst.registers[0][3] << " ], [ sr"
-                << inst.registers[1][3] << " ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-        }
-
-    }
-
 }
 
 
