@@ -206,6 +206,7 @@ vector<pair<Category, string>> processLine(string line, int line_num, bool displ
         s = nextState(s.first, line[char_pos], lexeme);
 //        cout << s << endl;
 
+
         if ( s.first != sErr ){
             if( s.second != EMPTY ){
                 // Category {EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT};
@@ -213,7 +214,6 @@ vector<pair<Category, string>> processLine(string line, int line_num, bool displ
                     break;
                 }
                 else{   //ALL OPERATIONS, REG, CONST
-
                     stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >"<< endl;
                     tokens.push_back(make_pair(s.second, lexeme));
 
@@ -347,7 +347,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s5: //store
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = MEMOP;
                 state = s0;
             } else {
@@ -367,7 +367,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s7: //sub
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = ARITHOP;
                 state = s0;
             } else {
@@ -410,7 +410,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             if (new_char == 'I') {
                 state = s12;
                 lexeme.push_back(new_char);
-            } else if (new_char == ' ' || new_char == '\t') {
+            } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = MEMOP;
                 state = s0;
             } else {
@@ -421,7 +421,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s12:
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = LOADI;
                 state = s0;
             } else {
@@ -480,7 +480,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s18: //rshift, lshift, mult
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = ARITHOP;
                 state = s0;
             } else {
@@ -536,7 +536,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s24: //add
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = ARITHOP;
                 state = s0;
             } else {
@@ -568,6 +568,9 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = NOP;
                 state = s0;
+            } else if(new_char == '/'){
+                cat = NOP;
+                state = s37;
             } else {
                 state = sErr;
                 cat = NOP;
@@ -621,7 +624,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             break;
 
         case s33: //output
-            if (new_char == ' ' || new_char == '\t') {
+            if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = OUTPUT;
                 state = s0;
             } else {
@@ -638,7 +641,6 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
                 state = s0;
             } else {
                 state = sErr;
-                cat = INTO;
             }
             break;
 
@@ -796,7 +798,7 @@ InctructionIR checkSemantics(const vector < pair<Category , string> > &words, co
 void showIR(InstructionBlock ir){
 
     if(ir.instructions.empty()){
-        cerr << "ERROR: No valid instruction, run terminates." << endl;
+        cerr << "ERROR: Not valid instructions, run terminates." << endl;
         return;
     }
 
