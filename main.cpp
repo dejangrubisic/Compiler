@@ -7,66 +7,251 @@
 #include <list>
 #include <vector>
 #include <array>
+#include <climits>
+#include <unordered_map>
 
 using namespace std;
 
 enum State {
     s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14,
     s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27,
-    s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, sComma, sErr};
+    s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, sComma, sErr
+};
 
-enum Category {EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT};
-static const char *CategoryStr[] = { "EMPTY", "MEMOP", "LOADI", "ARITHOP", "OUTPUT", "NOP", "INTO", "COMMA", "CONST", "REG"};
+enum Category {
+    EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT
+};
+static const char *CategoryStr[] = {"EMPTY", "MEMOP", "LOADI", "ARITHOP", "OUTPUT", "NOP", "INTO", "COMMA", "CONST",
+                                    "REG"};
 
-enum Operation{ load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err};
-static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mult", "lshift", "rshift", "output", "nop"};
+enum Operation {
+    load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err
+};
+static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mult", "lshift", "rshift", "output",
+                                     "nop"};
 
-struct InctructionIR{
+// 0 - NU, 1 - PR, 2 - VR, 3 - SR
+enum RegType {
+    NU, PR, VR, SR
+};
+enum RegNum {
+    R1, R2, R3
+};
+
+struct InctructionIR {
     Operation opcode;
     int line_num;
+    // R1, R2 => R3
     // 0 - NU, 1 - PR, 2 - VR, 3 - SR
     int registers[3][4];
     int constant;
 
-    InctructionIR(){
+    InctructionIR() {
         opcode = err;
+        for (int i = 0; i < 12; ++i) {
+            registers[i / 4][i % 4] = -1;
+        }
     }
-    InctructionIR(Operation s, int r1, int r2, int r3, int c){
+
+    InctructionIR(Operation s, int r1, int r2, int r3, int c) {
         opcode = s;
-        registers[0][3] = r1;
-        registers[1][3] = r2;
-        registers[2][3] = r3;
+        registers[0][SR] = r1;
+        registers[1][SR] = r2;
+        registers[2][SR] = r3;
         constant = c;
     }
 
 
 };
-struct InstructionBlock{
-    list< InctructionIR > instructions;
+
+struct InstructionBlock {
+    list <InctructionIR> instructions;
 
 };
-enum InputMode{ s, p, r, h};
+enum InputMode {
+    s, p, r, x, h
+};
 
-
+// Parsing funcitons
 pair<InputMode, char *> manageInput(int argc, char *argv[]);
-int strToInt(const string &str);
-void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word);
-void showIR(const InstructionBlock &ir);
-InstructionBlock scan(char *filename, bool check_semantics, bool display_tokens);
-vector<pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens);
-pair< State, Category> nextState(State state, char new_char, string &lexeme);
-InctructionIR parse(const vector < pair<Category, string> > &words , int line_num);
-InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > &words, int line_num);
-InctructionIR checkSemantics(const vector < pair<Category, string> > &words, const vector<Category> &grammar, int line_num);
 
+int strToInt(const string &str);
+
+void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word);
+
+void showIR(const InstructionBlock &ir);
+
+InstructionBlock scan(char *filename, bool check_semantics, bool display_tokens);
+
+vector <pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens);
+
+pair <State, Category> nextState(State state, char new_char, string &lexeme);
+
+InctructionIR parse(const vector <pair<Category, string>> &words, int line_num);
+
+InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category, string>> &words, int line_num);
+
+InctructionIR
+checkSemantics(const vector <pair<Category, string>> &words, const vector <Category> &grammar, int line_num);
+
+
+//***********************************************************************************************************
+struct TransTable {
+    int *srToVr;
+    int *lastUse;
+    int n;
+
+    TransTable(int size) : n(size) {
+        try {
+            srToVr = new int[size];
+            lastUse = new int[size];
+        } catch (bad_alloc &ba) {
+            cerr << "ERROR ALLOCATING MEMORY: bad_alloc caugth: " << ba.what() << endl;
+        }
+
+        for (int i = 0; i < size; ++i) {
+            srToVr[i] = INT_MAX;
+            lastUse[i] = INT_MAX;
+        }
+
+    }
+
+    ~TransTable() {
+        delete[] srToVr;
+        delete[] lastUse;
+    }
+
+    void show() {
+        cout << endl << "srToVr: ";
+        for (int i = 0; i < n; ++i)
+            cout << srToVr[i] << ", ";
+
+        cout << endl << "LU: ";
+        for (int i = 0; i < n; ++i)
+            cout << lastUse[i] << ", ";
+        cout << endl;
+    }
+};
+
+//Registar Renaming
+bool registerRenaming(const InstructionBlock &block);
+
+int regNormalize(InstructionBlock &block) {
+
+    int cnt = 0;
+    unordered_map<int, int> regMap;
+
+
+    for (auto &ir: block.instructions) {
+        for (int i = 0; i < 3; ++i) {
+
+            if (ir.registers[i][SR] == INT_MAX)
+                continue;
+
+            if (regMap.find(ir.registers[i][SR]) != regMap.end()) {
+                ir.registers[i][SR] = regMap[ir.registers[i][SR]];
+            } else {
+                regMap[ir.registers[i][SR]] = cnt;
+                ir.registers[i][SR] = cnt++;
+            }
+        }
+    }
+
+//    for(auto &i: regMap)
+//        cout << i.first<<" "<<i.second << endl;
+
+    return regMap.size();
+}
+
+void OPdef(int regs[][4], TransTable &table, int &vrName, RegNum Ri = R3) {
+    //OP defines
+    if (table.srToVr[regs[R3][SR]] == INT_MAX) {   //unused srToVr
+        table.srToVr[regs[R3][SR]] = vrName++;
+    }
+    regs[R3][VR] = table.srToVr[regs[R3][SR]];
+    regs[R3][NU] = table.lastUse[regs[R3][SR]];
+
+    table.srToVr[regs[R3][SR]] = INT_MAX;
+    table.lastUse[regs[R3][SR]] = INT_MAX;
+
+}
+
+void OPuse(int regs[][4], TransTable &table, int &vrName, RegNum Ri, const int &index) {
+    //OP uses
+
+    if (table.srToVr[regs[Ri][SR]] == INT_MAX) {   //last Use
+        table.srToVr[regs[Ri][SR]] = vrName++;
+    }
+    regs[Ri][VR] = table.srToVr[regs[Ri][SR]];
+    regs[Ri][NU] = table.lastUse[regs[Ri][SR]];
+
+    table.lastUse[regs[Ri][SR]] = index;
+}
+
+
+void setVR(list<InctructionIR>::iterator ins, TransTable &table, int &vrName, const int &index) {
+
+    switch (ins->opcode) {
+        case load:
+            OPuse(ins->registers, table, vrName, R1, index);
+            OPdef(ins->registers, table, vrName, R3);
+            break;
+
+        case loadI:
+            OPdef(ins->registers, table, vrName, R3);
+            break;
+
+        case store:
+            OPuse(ins->registers, table, vrName, R1, index);
+            OPuse(ins->registers, table, vrName, R3, index);
+            break;
+
+        case output:
+            OPuse(ins->registers, table, vrName, R1, index);
+            break;
+
+        default: //ARITH
+            OPuse(ins->registers, table, vrName, R1, index);
+            OPuse(ins->registers, table, vrName, R2, index);
+            OPdef(ins->registers, table, vrName, R3);
+            break;
+    }
+
+}
+
+bool registerRenaming(InstructionBlock &block) {
+
+    int vrName = 0;
+    int index = block.instructions.size();
+    int maxReg = regNormalize(block);
+    TransTable table(maxReg);
+
+    cout << "Num Reg = " << maxReg << endl;
+
+    for (auto it = prev(block.instructions.end()); it != prev(block.instructions.begin()); --it) {
+
+        if (it->opcode == nop) {
+            it = block.instructions.erase(it);
+            continue;
+        }
+        setVR(it, table, vrName, index);
+        index--;
+    }
+
+
+    return true;
+}
+
+
+//***********************************************************************************************************
 // HELPER FUNCTIONS
 
 // manageInput - parse command line
-pair<InputMode, char *> manageInput(int argc, char *argv[]){
+pair<InputMode, char *> manageInput(int argc, char *argv[]) {
 
-    pair<InputMode, char *> input(make_pair(s, argv[argc-1] ));
+    pair<InputMode, char *> input(make_pair(s, argv[argc - 1]));
 
-    if(argc == 2){
+    if (argc == 2) {
         input.first = p;
         return input;
     }
@@ -75,6 +260,8 @@ pair<InputMode, char *> manageInput(int argc, char *argv[]){
 
         if (strcmp(argv[i], "-h") == 0) {
             input.first = h;
+        } else if (strcmp(argv[i], "-x") == 0 && input.first < h) {
+            input.first = x;
         } else if (strcmp(argv[i], "-r") == 0 && input.first < r) {
             input.first = r;
         } else if (strcmp(argv[i], "-p") == 0 && input.first < p) {
@@ -92,35 +279,35 @@ int strToInt(const string &str) {
     int n = 0;
     int i = 0;
 
-    if(str[0] == 'r') {
+    if (str[0] == 'r') {
         i = 1;
     }
-    for (; i < int(str.length()) ; ++i) {
-        n = 10*n + (str[i] - '0');
+    for (; i < int(str.length()); ++i) {
+        n = 10 * n + (str[i] - '0');
     }
     return n;
 }
 
 // strToOperation - converts string to enum Operation
-Operation strToOperation(const string &op){
+Operation strToOperation(const string &op) {
 
-    if(op == "load")
+    if (op == "load")
         return load;
-    else if(op == "store")
+    else if (op == "store")
         return store;
-    else if(op == "loadI")
+    else if (op == "loadI")
         return loadI;
-    else if(op == "add")
+    else if (op == "add")
         return add;
-    else if(op == "sub")
+    else if (op == "sub")
         return sub;
-    else if(op == "mult")
+    else if (op == "mult")
         return mult;
-    else if(op == "lshift")
+    else if (op == "lshift")
         return lshift;
-    else if(op == "rshift")
+    else if (op == "rshift")
         return rshift;
-    else if(op == "output")
+    else if (op == "output")
         return output;
     else
         return nop;
@@ -128,12 +315,12 @@ Operation strToOperation(const string &op){
 }
 
 // If error happen it gets whole word as error word
-void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word){
+void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word) {
 
-    while(line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n'){
+    while (line[char_pos] != ' ' && line[char_pos] != '\t' && line[char_pos] != '\n') {
         err_word.push_back(line[++char_pos]);
     }
-    if(line[char_pos] == ' ' || line[char_pos] == '\t' || line[char_pos] == '\n')
+    if (line[char_pos] == ' ' || line[char_pos] == '\t' || line[char_pos] == '\n')
         err_word.pop_back();
 
     cerr << "ERROR: " << line_num << ": Lexical: \"" << err_word <<
@@ -143,23 +330,25 @@ void takeErrWord(int line_num, const string &line, int &char_pos, string &err_wo
 }
 
 // showIR - print IR in human readable form
-void showIR(const InstructionBlock &ir){
+void showIR(const InstructionBlock &ir) {
 
-    if(ir.instructions.empty()){
+    if (ir.instructions.empty()) {
         cerr << "ERROR: Not valid instructions, run terminates." << endl;
         return;
     }
 
-    for (const InctructionIR &inst : ir.instructions ) {
+    for (const InctructionIR &inst : ir.instructions) {
 
-        switch (inst.opcode){
+        switch (inst.opcode) {
 
             case load:
-                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]"
+                     << endl;
                 break;
 
             case store:
-                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
+                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]"
+                     << endl;
                 break;
 
             case loadI:
@@ -167,7 +356,7 @@ void showIR(const InstructionBlock &ir){
                 break;
 
             case output:
-                cout << OperationStr[inst.opcode] <<"\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
+                cout << OperationStr[inst.opcode] << "\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
                 break;
 
             case nop:
@@ -175,7 +364,7 @@ void showIR(const InstructionBlock &ir){
                 break;
 
             default: //
-                cout << OperationStr[inst.opcode] <<"\t [ sr" << inst.registers[0][3] << " ], [ sr"
+                cout << OperationStr[inst.opcode] << "\t [ sr" << inst.registers[0][3] << " ], [ sr"
                      << inst.registers[1][3] << " ], [ sr" << inst.registers[2][3] << " ]" << endl;
                 break;
         }
@@ -185,10 +374,10 @@ void showIR(const InstructionBlock &ir){
 }
 
 
-// MAIN FUNCTIONS
+// MAIN FUNCTIONS Implementations
 
 // Scan - creates tokens from input file, check lexical errors, and check_semantics(make IR)
-InstructionBlock scan(char * filename, bool check_semantics = false, bool display_tokens = false) {
+InstructionBlock scan(char *filename, bool check_semantics = false, bool display_tokens = false) {
 
     ifstream input_stream(filename, ifstream::in);
     if (!input_stream) cerr << "Cannot open input file: \"" << filename << "\"" << endl;
@@ -196,7 +385,7 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
     string line;
     int line_num = 0;
     int inst_count = 0;
-    vector < pair<Category, string> > result;
+    vector <pair<Category, string>> result;
 
     InctructionIR inst;
     InstructionBlock block;
@@ -208,38 +397,39 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
         line.push_back('\n');
         result = processLine(line, ++line_num, display_tokens);
 
-        if(result.empty())
+        if (result.empty())
             continue;
 
         inst_count++;
 
         // Parse Part
-        if(check_semantics){
+        if (check_semantics) {
             inst = parse(result, line_num);
 
-            if( inst.opcode != err ){
-                if(error_count == 0)
+            if (inst.opcode != err) {
+                if (error_count == 0)
                     block.instructions.push_back(inst);
-            }else{
+            } else {
                 error_count++;
             }
         }
 
     }
 
-    if(display_tokens){
+    if (display_tokens) {
         cout << line_num << ": < ENDFILE  , \"\" >" << endl;
     }
 
-    if(check_semantics){
-        if(error_count == 0){
-            cout << endl << "Parse succeeded, finding "<< inst_count - error_count <<" ILOC operations." << endl;
-        }else{
-            cerr << endl << "Parser found "<< error_count <<" Syntax errors in " << line_num <<" lines of input." << endl;
+    if (check_semantics) {
+        if (error_count == 0) {
+            cout << endl << "Parse succeeded, finding " << inst_count - error_count << " ILOC operations." << endl;
+        } else {
+            cerr << endl << "Parser found " << error_count << " Syntax errors in " << line_num << " lines of input."
+                 << endl;
         }
     }
 
-    if (inst_count == 0){
+    if (inst_count == 0) {
         cout << "WARNING: ILOC file contained no operations." << endl;
     }
 
@@ -248,11 +438,11 @@ InstructionBlock scan(char * filename, bool check_semantics = false, bool displa
 }
 
 // processLine - creates vector of tokens(Category, string)
-vector<pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens){
+vector <pair<Category, string>> processLine(const string &line, int line_num, bool display_tokens) {
 
     string lexeme, err_str;
-    pair< State, Category > s;
-    vector< pair<Category, string> > tokens;
+    pair <State, Category> s;
+    vector <pair<Category, string>> tokens;
     ostringstream stream;
 
 //    cout << "PROCSS LINE: " << line;
@@ -267,17 +457,16 @@ vector<pair<Category, string>> processLine(const string &line, int line_num, boo
 //        cout << s << endl;
 
 
-        if ( s.first != sErr ){
-            if( s.second != EMPTY ){
+        if (s.first != sErr) {
+            if (s.second != EMPTY) {
                 // Category {EMPTY, MEMOP, LOADI, ARITHOP, OUTPUT, NOP, INTO, COMMA, CONST, REG, COMMENT};
                 if (s.second == COMMENT) {
                     break;
-                }
-                else{   //ALL OPERATIONS, REG, CONST
-                    stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >"<< endl;
+                } else {   //ALL OPERATIONS, REG, CONST
+                    stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >" << endl;
                     tokens.push_back(make_pair(s.second, lexeme));
 
-                    if(s.second == REG && s.first == sComma){
+                    if (s.second == REG && s.first == sComma) {
                         stream << line_num << ": < COMMA\t, \",\" >" << endl;
                         tokens.push_back(make_pair(COMMA, ","));
                         s.first = s0;
@@ -285,19 +474,17 @@ vector<pair<Category, string>> processLine(const string &line, int line_num, boo
                 }
             }
 
-        }
-        else{ // Error States
-            if( s.second != EMPTY ){ //Accept lexeme[0:n-1] and make err message
+        } else { // Error States
+            if (s.second != EMPTY) { //Accept lexeme[0:n-1] and make err message
                 err_str = lexeme;
                 lexeme.pop_back();  // word you accept
-                stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >"<< endl;
+                stream << line_num << ": < " << CategoryStr[s.second] << "\t, \"" << lexeme << "\" >" << endl;
                 tokens.push_back(make_pair(s.second, lexeme));
 
                 takeErrWord(line_num, line, char_pos, err_str);
                 tokens.push_back(make_pair(EMPTY, err_str));
                 s.first = s0;
-            }
-            else{ // make err message
+            } else { // make err message
                 takeErrWord(line_num, line, char_pos, lexeme);
                 tokens.push_back(make_pair(EMPTY, lexeme));
                 s.first = s0;
@@ -305,16 +492,15 @@ vector<pair<Category, string>> processLine(const string &line, int line_num, boo
         }
 
 
-
     }
-    if(display_tokens){
+    if (display_tokens) {
         cout << stream.str();
     }
     return tokens;
 }
 
 // nextState - DFA of trasitions
-pair< State, Category> nextState( State state, char new_char, string &lexeme) {
+pair <State, Category> nextState(State state, char new_char, string &lexeme) {
 
     Category cat = EMPTY;
 
@@ -613,7 +799,7 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = NOP;
                 state = s0;
-            } else if(new_char == '/'){
+            } else if (new_char == '/') {
                 cat = NOP;
                 state = s37;
             } else {
@@ -697,10 +883,10 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = CONST;
                 state = s0;
-            } else if (new_char == '/'){
+            } else if (new_char == '/') {
                 cat = CONST;
                 state = s37;
-            } else if (new_char == '='){
+            } else if (new_char == '=') {
                 state = s34;
                 cat = CONST;
             } else {
@@ -717,13 +903,13 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
             } else if (new_char == ' ' || new_char == '\t' || new_char == '\n') {
                 cat = REG;
                 state = s0;
-            }  else if (new_char == '/'){
+            } else if (new_char == '/') {
                 cat = REG;
                 state = s37;
             } else if (new_char == ',') {
                 cat = REG;
                 state = sComma; // send both REG and COMMA
-            } else if (new_char == '='){
+            } else if (new_char == '=') {
                 cat = REG;
                 state = s34;
             } else {
@@ -751,9 +937,9 @@ pair< State, Category> nextState( State state, char new_char, string &lexeme) {
 }
 
 // parse - check semantics for every Category
-InctructionIR parse(const vector < pair<Category , string> > &words, int line_num ){
+InctructionIR parse(const vector <pair<Category, string>> &words, int line_num) {
 
-    switch (words[0].first){
+    switch (words[0].first) {
         case MEMOP:
             return checkSemantics(words, vector<Category>({MEMOP, REG, INTO, REG}), line_num);
 
@@ -770,18 +956,18 @@ InctructionIR parse(const vector < pair<Category , string> > &words, int line_nu
             return checkSemantics(words, vector<Category>({NOP}), line_num);
 
         default:
-            cerr << "ERROR: " << line_num << ": Syntax: Undefined operation \"" << words[0].second <<"\""<< endl;
+            cerr << "ERROR: " << line_num << ": Syntax: Undefined operation \"" << words[0].second << "\"" << endl;
             return InctructionIR();
     }
 }
 
 // setupInstruction - creates instruction IR from tokens
-InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category , string> > &words, int line_num){
+InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category, string>> &words, int line_num) {
     // SETUP INSTRUCTION_IR
 
     inst.opcode = strToOperation(words[0].second);
     inst.line_num = line_num;
-    switch (words[0].first){
+    switch (words[0].first) {
         case MEMOP:
             inst.registers[0][3] = strToInt(words[1].second);
             inst.registers[2][3] = strToInt(words[3].second);
@@ -809,16 +995,17 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector < pair<Category
 }
 
 // checkSemantics - compare grammar with tokens
-InctructionIR checkSemantics(const vector < pair<Category , string> > &words, const vector<Category> &grammar, int line_num){
+InctructionIR
+checkSemantics(const vector <pair<Category, string>> &words, const vector <Category> &grammar, int line_num) {
 
     InctructionIR inst;
     int i;
 
-    if (words.size() < grammar.size()){
+    if (words.size() < grammar.size()) {
         cerr << "ERROR: " << line_num << ": Syntax: too few words. Format is: ";
 
-        for (int i = 0; i < int(grammar.size()) ; ++i) {
-            cout << CategoryStr[grammar[i]] <<" ";
+        for (int i = 0; i < int(grammar.size()); ++i) {
+            cout << CategoryStr[grammar[i]] << " ";
         }
         cout << endl;
         return inst;
@@ -827,39 +1014,39 @@ InctructionIR checkSemantics(const vector < pair<Category , string> > &words, co
 
     for (i = 1; i < int(grammar.size()); ++i) {
 //            cout << words[i].first << " -- gramar: "<< grammar[i] << endl;
-        if(words[i].first != grammar[i]){
+        if (words[i].first != grammar[i]) {
             cerr << "ERROR: " << line_num << ": Syntax: Invalid word \"" << words[i].second <<
-            "\" Should be: "<< CategoryStr[grammar[i]] << endl;
+                 "\" Should be: " << CategoryStr[grammar[i]] << endl;
             return inst;
         }
     }
-    if(words.size() > grammar.size()){
-        cerr << "ERROR: " << line_num << ": Syntax: too many words :\"" << words[i].second <<"\""<<endl;
+    if (words.size() > grammar.size()) {
+        cerr << "ERROR: " << line_num << ": Syntax: too many words :\"" << words[i].second << "\"" << endl;
         return inst;
     }
 
-    return  setupInstruction(inst, words, line_num);
+    return setupInstruction(inst, words, line_num);
 }
 
 
 int main(int argc, char *argv[]) {
 
-    pair< InputMode , char * > input = manageInput(argc, argv);
-    InstructionBlock ir;
+    pair<InputMode, char *> input = manageInput(argc, argv);
+    InstructionBlock irBlock;
 
-    switch (input.first){
+    switch (input.first) {
 
         case h:
             cout << "Optional flags:\n" <<
-                    "        -h       prints this message\n" <<
-                    "        -s       prints tokens in token stream\n" <<
-                    "        -p       invokes parser and reports on success or failure\n" <<
-                    "        -r       prints human readable version of parser's IR\n";
+                 "        -h       prints this message\n" <<
+                 "        -s       prints tokens in token stream\n" <<
+                 "        -p       invokes parser and reports on success or failure\n" <<
+                 "        -r       prints human readable version of parser's IR\n";
             break;
 
         case r:
-            ir = scan(input.second, true, false);
-            showIR(ir);
+            irBlock = scan(input.second, true, false);
+            showIR(irBlock);
             break;
 
         case p:
@@ -868,6 +1055,13 @@ int main(int argc, char *argv[]) {
 
         case s:
             scan(input.second, false, true);
+            break;
+
+        case x:
+            irBlock = scan(input.second, true, false);
+            showIR(irBlock);
+            registerRenaming(irBlock);
+            showIR(irBlock);
             break;
     }
 
