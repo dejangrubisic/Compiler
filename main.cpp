@@ -34,6 +34,8 @@ static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mu
 enum RegType {
     NU, PR, VR, SR
 };
+static const char *RegTypeStr[] = {"nu", "pr", "vr", "sr"};
+
 enum RegNum {
     R1, R2, R3
 };
@@ -49,25 +51,116 @@ struct InctructionIR {
     InctructionIR() {
         opcode = err;
         for (int i = 0; i < 12; ++i) {
-            registers[i / 4][i % 4] = -1;
+            registers[i / 4][i % 4] = INT_MAX;
         }
+        constant = -1;
     }
 
     InctructionIR(Operation s, int r1, int r2, int r3, int c) {
         opcode = s;
-        registers[0][SR] = r1;
-        registers[1][SR] = r2;
-        registers[2][SR] = r3;
+        registers[R1][SR] = r1;
+        registers[R2][SR] = r2;
+        registers[R3][SR] = r3;
         constant = c;
     }
 
+    void showReg(RegType RT) const {
+        //todo: fix this back
+        string rt = "r";//RegTypeStr[RT];
+        string s1 = (opcode == loadI || opcode == output) ? to_string(constant) : "";
+
+        cout << OperationStr[opcode] << " "
+             << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
+             << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
+             << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "") << endl;
+    }
+
+    void showAllRegs() const {
+        int tmpReg;
+        cout << "opcode " << "\t Const " << "\tR1 (SR,VR,PR,LU) " << "    R2   " << "\t  R3 " << endl;
+        cout << OperationStr[opcode] << "\t" << constant << "\t";
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 3; j >= 0; --j) {
+                tmpReg = registers[i][j];
+
+                cout << ((j == 3) ? " | " : " ") << ((tmpReg != INT_MAX) ? to_string(tmpReg) : "-") << " ";
+            }
+        }
+        cout << endl;
+    }
 
 };
 
 struct InstructionBlock {
     list <InctructionIR> instructions;
+// showIR - print IR in human readable form
 
+    void showInstructions() const {
+
+        if (instructions.empty()) {
+            cerr << "ERROR: Not valid instructions, run terminates." << endl;
+            return;
+        }
+
+        for (const InctructionIR &inst : instructions) {
+
+            switch (inst.opcode) {
+
+                case load:
+                    cout << "load\t [ sr" << inst.registers[R1][SR] << " ], [ ], [ sr" << inst.registers[R3][SR] << " ]"
+                         << endl;
+                    break;
+
+                case store:
+                    cout << "store\t [ sr" << inst.registers[R1][SR] << " ], [ ], [ sr" << inst.registers[R3][SR]
+                         << " ]"
+                         << endl;
+                    break;
+
+                case loadI:
+                    cout << "loadI\t [ val " << inst.constant << " ], [ ], [ sr" << inst.registers[R3][SR] << " ]"
+                         << endl;
+                    break;
+
+                case output:
+                    cout << OperationStr[inst.opcode] << "\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
+                    break;
+
+                case nop:
+                    cout << "nop\t [ ], [ ], [ ]" << endl;
+                    break;
+
+                default: //
+                    cout << OperationStr[inst.opcode] << "\t [ sr" << inst.registers[R1][SR] << " ], [ sr"
+                         << inst.registers[R2][SR] << " ], [ sr" << inst.registers[R3][SR] << " ]" << endl;
+                    break;
+            }
+        }
+    }
+
+    void showIR(RegType rt = SR) const {
+        if (instructions.empty()) {
+            cerr << "ERROR: Not valid instructions, run terminates." << endl;
+            return;
+        }
+
+        for (const InctructionIR &inst : this->instructions) {
+            inst.showReg(rt);
+        }
+    }
+
+    void showAllRegs() const {
+        if (instructions.empty()) {
+            cerr << "ERROR: Not valid instructions, run terminates." << endl;
+            return;
+        }
+
+        for (const InctructionIR &inst : this->instructions) {
+            inst.showAllRegs();
+        }
+    }
 };
+
 enum InputMode {
     s, p, r, x, h
 };
@@ -78,8 +171,6 @@ pair<InputMode, char *> manageInput(int argc, char *argv[]);
 int strToInt(const string &str);
 
 void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word);
-
-void showIR(const InstructionBlock &ir);
 
 InstructionBlock scan(char *filename, bool check_semantics, bool display_tokens);
 
@@ -163,78 +254,87 @@ int regNormalize(InstructionBlock &block) {
     return regMap.size();
 }
 
-void OPdef(int regs[][4], TransTable &table, int &vrName, RegNum Ri = R3) {
+void opDef(int regs[][4], TransTable &table, int &vrName, RegNum Ri = R3) {
     //OP defines
-    if (table.srToVr[regs[R3][SR]] == INT_MAX) {   //unused srToVr
-        table.srToVr[regs[R3][SR]] = vrName++;
+    if (table.srToVr[regs[Ri][SR]] == INT_MAX) {   //unused srToVr
+        table.srToVr[regs[Ri][SR]] = vrName++;
     }
-    regs[R3][VR] = table.srToVr[regs[R3][SR]];
-    regs[R3][NU] = table.lastUse[regs[R3][SR]];
+    regs[R3][VR] = table.srToVr[regs[Ri][SR]];
+    regs[R3][NU] = table.lastUse[regs[Ri][SR]];
 
-    table.srToVr[regs[R3][SR]] = INT_MAX;
-    table.lastUse[regs[R3][SR]] = INT_MAX;
+    table.srToVr[regs[Ri][SR]] = INT_MAX;
+    table.lastUse[regs[Ri][SR]] = INT_MAX;
 
 }
 
-void OPuse(int regs[][4], TransTable &table, int &vrName, RegNum Ri, const int &index) {
+void opUse(int regs[][4], TransTable &table, int &vrName, RegNum Ri, const int &index) {
     //OP uses
+//    cout << "opUse"<<endl;
+//    cout << regs[Ri][SR]<<endl;//<<" "<<table.srToVr[regs[Ri][SR]]<<endl;
 
     if (table.srToVr[regs[Ri][SR]] == INT_MAX) {   //last Use
         table.srToVr[regs[Ri][SR]] = vrName++;
     }
     regs[Ri][VR] = table.srToVr[regs[Ri][SR]];
     regs[Ri][NU] = table.lastUse[regs[Ri][SR]];
-
     table.lastUse[regs[Ri][SR]] = index;
 }
 
 
 void setVR(list<InctructionIR>::iterator ins, TransTable &table, int &vrName, const int &index) {
 
+//    cout << "SET VR"<<endl;
     switch (ins->opcode) {
         case load:
-            OPuse(ins->registers, table, vrName, R1, index);
-            OPdef(ins->registers, table, vrName, R3);
+            opDef(ins->registers, table, vrName, R3);
+            opUse(ins->registers, table, vrName, R1, index);
             break;
 
         case loadI:
-            OPdef(ins->registers, table, vrName, R3);
+            opDef(ins->registers, table, vrName, R3);
             break;
 
         case store:
-            OPuse(ins->registers, table, vrName, R1, index);
-            OPuse(ins->registers, table, vrName, R3, index);
+            opUse(ins->registers, table, vrName, R1, index);
+            opUse(ins->registers, table, vrName, R3, index);
             break;
 
-        case output:
-            OPuse(ins->registers, table, vrName, R1, index);
-            break;
+//        case output:
+//            opUse(ins->registers, table, vrName, R1, index);
+//            break;
 
         default: //ARITH
-            OPuse(ins->registers, table, vrName, R1, index);
-            OPuse(ins->registers, table, vrName, R2, index);
-            OPdef(ins->registers, table, vrName, R3);
+            opDef(ins->registers, table, vrName, R3);
+            opUse(ins->registers, table, vrName, R1, index);
+            opUse(ins->registers, table, vrName, R2, index);
             break;
     }
+//    cout << endl << index << " " << OperationStr[ins->opcode] << ": vrName = " << vrName;
+//    table.show();
 
 }
 
 bool registerRenaming(InstructionBlock &block) {
 
     int vrName = 0;
-    int index = block.instructions.size();
+    int index = block.instructions.size() - 1; //just to come to 0
     int maxReg = regNormalize(block);
     TransTable table(maxReg);
 
-    cout << "Num Reg = " << maxReg << endl;
+//    cout << "Num Reg = " << maxReg << endl;
+//    block.showIR(SR);
 
+    //Go from end of list to begin
     for (auto it = prev(block.instructions.end()); it != prev(block.instructions.begin()); --it) {
 
         if (it->opcode == nop) {
             it = block.instructions.erase(it);
             continue;
+        }else if(it->opcode == output){
+            continue;
         }
         setVR(it, table, vrName, index);
+
         index--;
     }
 
@@ -329,49 +429,6 @@ void takeErrWord(int line_num, const string &line, int &char_pos, string &err_wo
     return;
 }
 
-// showIR - print IR in human readable form
-void showIR(const InstructionBlock &ir) {
-
-    if (ir.instructions.empty()) {
-        cerr << "ERROR: Not valid instructions, run terminates." << endl;
-        return;
-    }
-
-    for (const InctructionIR &inst : ir.instructions) {
-
-        switch (inst.opcode) {
-
-            case load:
-                cout << "load\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]"
-                     << endl;
-                break;
-
-            case store:
-                cout << "store\t [ sr" << inst.registers[0][3] << " ], [ ], [ sr" << inst.registers[2][3] << " ]"
-                     << endl;
-                break;
-
-            case loadI:
-                cout << "loadI\t [ val " << inst.constant << " ], [ ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-
-            case output:
-                cout << OperationStr[inst.opcode] << "\t [ val " << inst.constant << " ], [ ], [ ]" << endl;
-                break;
-
-            case nop:
-                cout << "nop\t [ ], [ ], [ ]" << endl;
-                break;
-
-            default: //
-                cout << OperationStr[inst.opcode] << "\t [ sr" << inst.registers[0][3] << " ], [ sr"
-                     << inst.registers[1][3] << " ], [ sr" << inst.registers[2][3] << " ]" << endl;
-                break;
-        }
-
-    }
-
-}
 
 
 // MAIN FUNCTIONS Implementations
@@ -422,7 +479,7 @@ InstructionBlock scan(char *filename, bool check_semantics = false, bool display
 
     if (check_semantics) {
         if (error_count == 0) {
-            cout << endl << "Parse succeeded, finding " << inst_count - error_count << " ILOC operations." << endl;
+//            cout << endl << "Parse succeeded, finding " << inst_count - error_count << " ILOC operations." << endl;
         } else {
             cerr << endl << "Parser found " << error_count << " Syntax errors in " << line_num << " lines of input."
                  << endl;
@@ -969,19 +1026,19 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category,
     inst.line_num = line_num;
     switch (words[0].first) {
         case MEMOP:
-            inst.registers[0][3] = strToInt(words[1].second);
-            inst.registers[2][3] = strToInt(words[3].second);
+            inst.registers[R1][SR] = strToInt(words[1].second);
+            inst.registers[R3][SR] = strToInt(words[3].second);
             break;
 
         case LOADI:
             inst.constant = strToInt(words[1].second);
-            inst.registers[2][3] = strToInt(words[3].second);
+            inst.registers[R3][SR] = strToInt(words[3].second);
             break;
 
         case ARITHOP:
-            inst.registers[0][3] = strToInt(words[1].second);
-            inst.registers[1][3] = strToInt(words[3].second);
-            inst.registers[2][3] = strToInt(words[5].second);
+            inst.registers[R1][SR] = strToInt(words[1].second);
+            inst.registers[R2][SR] = strToInt(words[3].second);
+            inst.registers[R3][SR] = strToInt(words[5].second);
             break;
 
         case OUTPUT:
@@ -1046,7 +1103,7 @@ int main(int argc, char *argv[]) {
 
         case r:
             irBlock = scan(input.second, true, false);
-            showIR(irBlock);
+            irBlock.showIR();
             break;
 
         case p:
@@ -1059,9 +1116,14 @@ int main(int argc, char *argv[]) {
 
         case x:
             irBlock = scan(input.second, true, false);
-            showIR(irBlock);
+//            irBlock.showAllRegs();
+//            irBlock.showIR();
+
             registerRenaming(irBlock);
-            showIR(irBlock);
+//            cout << "reg REName pass" << endl;
+//            irBlock.showAllRegs();
+//            irBlock.showIR(SR);
+            irBlock.showIR(VR);
             break;
     }
 
