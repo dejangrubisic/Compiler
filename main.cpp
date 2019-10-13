@@ -445,7 +445,8 @@ int spill(list<InctructionIR> &block, list<InctructionIR>::iterator ins, TableVr
         //Spill LRU Physical REG
         block.insert(ins, InctructionIR(loadI, INT_MAX, INT_MAX, prMem, table.memLoc, PR));
         block.insert(ins, InctructionIR(store, prSpill, INT_MAX, prMem, -1, PR));
-        table.vrRemat[vrSpill].second = table.memLoc++;
+        table.vrRemat[vrSpill].second = table.memLoc;
+        table.memLoc += 4;
     }
     table.vrToPr[vrSpill] = INT_MAX;
 
