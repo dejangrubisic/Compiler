@@ -420,15 +420,21 @@ struct TableVrPr {
 int posMax(TableVrPr &table) {
     int pos=-1, m = 0;
     for (int i = 0; i < int(table.prNU.size()); ++i) {
+//        cout<<"i = "<<i<<" table.prNU[i] = "<<table.prNU[i]<<" VR = "<<table.prToVr[i];
+//        cout<<" LoadI = "<<table.vrRemat[table.prToVr[i]].first<< endl;
+
         if (i == table.markedReg[0] || i == table.markedReg[1])
             continue;
 
-        if(table.vrRemat[table.prToVr[i]].first == true)
-            return i;
         if (table.prNU[i] > m) {
+
             m = table.prNU[i];
             pos = i;
+        }else if (table.prNU[i] >= m-1 && table.vrRemat[table.prToVr[i]].first == true){//loadI VR
+            pos = i;
         }
+        //        if(table.vrRemat[table.prToVr[i]].first == true)    //loadI VR
+        //            return i;
     }
     if(pos == -1)
         cerr<<"Free PR not found"<<endl<<endl;
@@ -437,7 +443,14 @@ int posMax(TableVrPr &table) {
 }
 
 int spill(list<InctructionIR> &block, list<InctructionIR>::iterator ins, TableVrPr &table) {
+
+//    cout<<"SPILL-------------------------"<<endl;
+//    cout<<"Ins: ";
+//    ins->showReg(VR);
+//    cout<<"Marked: "<<table.markedReg[0]<<" | "<< table.markedReg[1]<<endl;
     int prSpill = posMax(table);
+//    cout<<"prSpill: "<<prSpill<<endl;
+
     int &vrSpill = table.prToVr[prSpill];
     int prMem = table.prToVr.size();
 
@@ -467,13 +480,17 @@ void restore(list<InctructionIR> &block, list<InctructionIR>::iterator ins, RegN
 
 
 int getPr(list<InctructionIR> &block, list<InctructionIR>::iterator ins, RegNum reg, TableVrPr &table) {
+
     int &vr = ins->registers[reg][VR];
     int &nu = ins->registers[reg][NU];
     int pr;
 
+//    cout<<"GetPR: VR = "<<vr << " NU = "<<nu<<endl;
+
+
     if (table.prFree.empty()) {
 //        cout<<"No Free PRs"<<endl;
-        pr = spill(block, ins, table); //todo: consider dirty bit
+        pr = spill(block, ins, table);
     } else {
         pr = table.prFree.top();
         table.prFree.pop();
@@ -510,8 +527,9 @@ void setPr(list<InctructionIR> &block, list<InctructionIR>::iterator ins, TableV
 //            table.prMarked[pr] = true;
 
         table.markedReg[r1_2] = pr;
+        table.prNU[pr] = ins->registers[r1_2][NU];
     }
-
+    // If last use clean PR
     for (auto &r1_2: regUseDef.first) {
         pr = ins->registers[r1_2][PR];
         if (ins->registers[r1_2][NU] == INT_MAX && pr != INT_MAX) {
@@ -579,14 +597,18 @@ tuple<InputMode, int, char *> manageInput(int argc, char *argv[]) {
         return input;
     }else if(argc == 3){
         int regNum = strToInt(argv[1]);
-        if (3 <= regNum && regNum <= 64){
-            get<0>(input) = k;
-            get<1>(input) = regNum;
-        }else{
-            cerr << "Number of registers must be in interval [3, 64]" << endl;
-            exit(1);
-        }
 
+        if ( regNum != INT_MAX){
+            if (3 <= regNum && regNum <= 64){
+                get<0>(input) = k;
+                get<1>(input) = regNum;
+            }else{
+                cerr << "Number of registers must be in interval [3, 64]" << endl;
+                exit(1);
+            }
+        }else if (strcmp(argv[1], "-x") == 0) {
+            get<0>(input) = x;
+        }
         return input;
     }
 
@@ -1375,6 +1397,7 @@ int main(int argc, char *argv[]) {
 //            cout <<"Successful Renaming"<<endl<<endl;
             bottomUpAllocator(irBlock, vrNum, prReg);
 //            cout <<"Successful Allocation"<<endl<<endl;
+//todo:Vrati ovo irBlock.showIR(PR);
             irBlock.showIR(PR);
 
 //            irBlock.showAllRegs();
