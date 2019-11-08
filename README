@@ -1,0 +1,6 @@
+//NAME: Dejan Grubisic
+//NETID: dx4
+
+In this project there is implemented scanner and parser. Scaner makes tokens from every instruction and check lexical errors.
+Parser uses token representation, check semantics of the instructions and make Intermediate Representation.
+First build main.cpp with make command and run the code with ./412fe -h file.i to se all commands.

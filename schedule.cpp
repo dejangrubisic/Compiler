@@ -1,3 +1,7 @@
+//
+// Created by Dejan Grubisic on 11/6/2019.
+//
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -36,7 +40,7 @@ static const char *OperationStr[] = {"load", "store", "loadI", "add", "sub", "mu
 enum RegType {
     NU, PR, VR, SR
 };
-//static const char *RegTypeStr[] = {"nu", "pr", "vr", "sr"}; //TODO: this is part of InstructionIR->showReg()
+static const char *RegTypeStr[] = {"nu", "pr", "vr", "sr"};
 
 enum RegNum {
     R1, R2, R3, Rnone
@@ -67,7 +71,6 @@ struct InctructionIR {
     }
 
     void showReg(RegType RT) const {
-        //todo: fix this back
         string rt = "r";//RegTypeStr[RT];
         string s1 = (opcode == loadI || opcode == output) ? to_string(constant) : "";
 
@@ -79,7 +82,7 @@ struct InctructionIR {
 
     void showAllRegs() const {
         int tmpReg;
-        cout << "opcode " << "\t Const " << "\tR1 (SR,VR,PR,LU) " << "    R2   " << "\t  R3 " << endl;
+        cout << line_num<< " opcode " << "\t Const " << "\tR1 (SR,VR,PR,LU) " << "    R2   " << "\t  R3 " << endl;
         cout << OperationStr[opcode] << "\t" << constant << "\t";
         for (int i = 0; i < 3; ++i) {
             for (int j = 3; j >= 0; --j) {
@@ -164,11 +167,13 @@ struct InstructionBlock {
 };
 
 enum InputMode {
-    s, p, r, k, x, h
+    s, h
 };
 // Parsing funcitons
 tuple<InputMode, int, char *> manageInput(int argc, char *argv[]);
 
+
+//***********************************************************************************************************
 int strToInt(const string &str);
 
 void takeErrWord(int line_num, const string &line, int &char_pos, string &err_word);
@@ -185,7 +190,6 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category,
 
 InctructionIR
 checkSemantics(const vector <pair<Category, string>> &words, const vector <Category> &grammar, int line_num);
-
 
 //***********************************************************************************************************
 //TODO: maybe put vector for srToVr and lastUse
@@ -215,7 +219,7 @@ struct TableSrVr {
         delete[] lastUse;
     }
 
-    void show() {
+    void show() const{
         cout << endl << "srToVr: ";
         for (int i = 0; i < n; ++i)
             cout << srToVr[i] << ", ";
@@ -282,7 +286,6 @@ void opUse(int regs[][4], TableSrVr &table, int &vrName, RegNum Ri, const int &i
     table.lastUse[regs[Ri][SR]] = index;
 }
 
-
 void setVR(list<InctructionIR>::iterator ins, TableSrVr &table, int &vrName, const int &index) {
 
 //    cout << "SET VR"<<endl;
@@ -341,312 +344,169 @@ int registerRenaming(InstructionBlock &block) {
 
     return vrName;
 }
-//---------------------------------------------------------------------
-// for each physical register p, VR TO PR [PR TO VR[p]] = p
-// for each virtual register v, if VR TO PR [v] is defined, PR TO VR[VR TO PR [v]] = v
-// if you have same value on reg try to allocate same reg for same virtual reg (avoid reg to reg copy)
-
-pair <list<RegNum>, RegNum> opUseDef(Operation op) {
+//***********************************************************************************************************
+//TODO: Scheduling
+pair <list<int>, int> opUseDef(InctructionIR ins, RegType reg) {
 //    cout<<"OP: "<<OperationStr[op]<<endl;
-    switch (op) {
+    switch (ins.opcode) {
         case load:
-            return make_pair(list < RegNum > {R1}, R3);
+            return make_pair(list < int > {ins.registers[R1][reg]}, ins.registers[R3][reg]);
         case loadI:
-            return make_pair(list < RegNum > {}, R3);
+            return make_pair(list < int > {}, ins.registers[R3][reg]);
         case store:
-            return make_pair(list < RegNum > {R1, R3}, Rnone);
+            return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R3][reg]}, INT_MAX);
         case output:
-            return make_pair(list < RegNum > {}, Rnone);
+            return make_pair(list < int > {}, INT_MAX);
         default: //ARITH
-            return make_pair(list < RegNum > {R1, R2}, R3);
+            return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R2][reg]}, ins.registers[R3][reg]);
     }
 }
 
-struct TableVrPr {
-    vector<int> vrToPr;
-    vector <pair<bool, int>> vrRemat;    //if bool = 0, int = location in memory
-    //if bool = 1, int = const for loadI,
-    int memLoc;
-    vector<int> prToVr; //prNum-1 places for regular operations and 1 for spill
-    vector<int> prNU;   // TODO: heap_max
-//    vector<bool> prMarked;
-    stack<int> prFree;
-    int markedReg[2];
 
-    TableVrPr(int vrNum, int prNum, int mem) : vrToPr(vrNum, INT_MAX), vrRemat(vrNum, make_pair(false, INT_MAX)),
-                                               memLoc(mem), prToVr(prNum-1, INT_MAX), prNU(prNum-1, INT_MAX){
-        for (int i = prNum-2; i >= 0 ; --i) {
-            prFree.push(i);
-        }
-        markedReg[0] = INT_MAX;
-        markedReg[1] = INT_MAX;
-    }
-//                                               prMarked(prNum-1, INT_MAX) {}
-    void printFreePR(){
-        list<int> tmp;
-        cout<< "Free PR:"<<endl;
-        while(!prFree.empty()){
-            tmp.push_front(prFree.top());
-            cout<<prFree.top()<<" | ";
-            prFree.pop();
-        }
-        cout<<endl;
-        for(auto &x: tmp)
-            prFree.push(x);
-    }
-    void print(){
-        cout<<"----------------------------------------------"<<endl;
-        cout<<"Table:"<<endl<<"vrToPr | vrRemat: "<<endl;
-        for (int i = 0; i < int(vrToPr.size()); ++i) {
-            cout <<i<<". "<< vrToPr[i] << " [ " << vrRemat[i].first << " , " << vrRemat[i].second <<" ]"<<endl;
-        }
-        cout<<endl;
+struct Edge{
+    int from;
+    int to;
+    int weight;
 
-        cout<<"prToVr | NU: "<<endl;
-        for(int i = 0; i < int(prToVr.size()); ++i){
-            cout<<i<<". "<< prToVr[i]<< " | "<<prNU[i]<<endl;
-        }
-        cout<<endl;
-        printFreePR();
-        cout<<"----------------------------------------------"<<endl;
-        cout<<endl;
-    }
-    void clearMark() {
-        markedReg[0] = INT_MAX;
-        markedReg[1] = INT_MAX;
+    Edge(int from, int to, int weight):from(from), to(to), weight(weight){}
+
+    void show()const{
+        cout << from << " ---> "<<to<<" | weight = "<<weight<<endl;
     }
 };
 
-int posMax(TableVrPr &table) {
-    int pos=-1, m = 0;
-    for (int i = 0; i < int(table.prNU.size()); ++i) {
-//        cout<<"i = "<<i<<" table.prNU[i] = "<<table.prNU[i]<<" VR = "<<table.prToVr[i];
-//        cout<<" LoadI = "<<table.vrRemat[table.prToVr[i]].first<< endl;
+struct Node{
+    list<Edge> edgeOut;
+    list<Edge> edgeIn;
 
-        if (i == table.markedReg[0] || i == table.markedReg[1])
-            continue;
+    const InctructionIR *ins ;
+    int latency;   //maybe vector
 
-        if (table.prNU[i] > m) {
-
-            m = table.prNU[i];
-            pos = i;
-        }else if (table.prNU[i] >= m-1 && table.vrRemat[table.prToVr[i]].first == true){//loadI VR
-            pos = i;
-        }
-        //        if(table.vrRemat[table.prToVr[i]].first == true)    //loadI VR
-        //            return i;
+    Node(){
+        latency = 0;
+        ins = 0;
     }
-    if(pos == -1)
-        cerr<<"Free PR not found"<<endl<<endl;
+};
 
-    return pos;
-}
+struct Graph{
+    vector< Node > nodes;
+    //    load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err
+    int latencyTable[10] = {5, 5, 1, 1, 1, 3, 1, 1, 1, 1};
+    vector<int> regToNode;
+    stack< pair<Operation, int> > depIO;
 
-int spill(list<InctructionIR> &block, list<InctructionIR>::iterator ins, TableVrPr &table) {
+    Graph(int insNum, int regNum):nodes(insNum),regToNode(regNum){}
 
-//    cout<<"SPILL-------------------------"<<endl;
-//    cout<<"Ins: ";
-//    ins->showReg(VR);
-//    cout<<"Marked: "<<table.markedReg[0]<<" | "<< table.markedReg[1]<<endl;
-    int prSpill = posMax(table);
-//    cout<<"prSpill: "<<prSpill<<endl;
+    void addEdgesIO(const InctructionIR &ins){
 
-    int &vrSpill = table.prToVr[prSpill];
-    int prMem = table.prToVr.size();
+        if(depIO.empty()) {
+            depIO.push(make_pair(ins.opcode, ins.line_num));
+        }else{
+                const pair<Operation, int> prevIO = depIO.top();
 
-    if (table.vrRemat[vrSpill].first == false && table.prNU[prSpill] != INT_MAX) {
-        //Spill LRU Physical REG
-        block.insert(ins, InctructionIR(loadI, INT_MAX, INT_MAX, prMem, table.memLoc, PR));
-        block.insert(ins, InctructionIR(store, prSpill, INT_MAX, prMem, -1, PR));
-        table.vrRemat[vrSpill].second = table.memLoc;
-        table.memLoc += 4;
-    }
-    table.vrToPr[vrSpill] = INT_MAX;
-
-//    cout <<"SPILL::MARKED = "<< table.markedReg[0]<<", "<<table.markedReg[1]<<"| newPR-> "<< prSpill<<endl;
-    return prSpill;
-}
-
-void restore(list<InctructionIR> &block, list<InctructionIR>::iterator ins, RegNum reg, TableVrPr &table, int vr) {
-    int prMem = table.prToVr.size();
-
-    if(table.vrRemat[vr].first == true){    //Rematerialize
-        block.insert(ins, InctructionIR(loadI, INT_MAX, INT_MAX, table.vrToPr[vr], table.vrRemat[vr].second, PR));
-    }else{  // Have to ReLoad from Mem
-        block.insert(ins, InctructionIR(loadI, INT_MAX, INT_MAX, prMem, table.vrRemat[vr].second, PR));
-        block.insert(ins, InctructionIR(load, prMem, INT_MAX, table.vrToPr[vr], INT_MAX, PR));
-    }
-}
-
-
-int getPr(list<InctructionIR> &block, list<InctructionIR>::iterator ins, RegNum reg, TableVrPr &table) {
-
-    int &vr = ins->registers[reg][VR];
-    int &nu = ins->registers[reg][NU];
-    int pr;
-
-//    cout<<"GetPR: VR = "<<vr << " NU = "<<nu<<endl;
-
-
-    if (table.prFree.empty()) {
-//        cout<<"No Free PRs"<<endl;
-        pr = spill(block, ins, table);
-    } else {
-        pr = table.prFree.top();
-        table.prFree.pop();
-    }
-    table.vrToPr[vr] = pr;
-    table.prToVr[pr] = vr;
-    table.prNU[pr] = nu;
-
-    return pr;
-}
-
-//bool if instruction need to be deleted
-bool setPr(list<InctructionIR> &block, list<InctructionIR>::iterator ins, TableVrPr &table) {
-
-    pair <list<RegNum>, RegNum> regUseDef = opUseDef(ins->opcode);    // first - uses, second - def
-    RegNum &r3 = regUseDef.second;
-    int pr;
-    int vr;
-//    table.clearMark();
-
-    // If no R3 next use just update NU for PR if any
-    if (ins->registers[r3][NU] == INT_MAX){
-        for (auto &r1_2: regUseDef.first) {
-            vr = ins->registers[r1_2][VR];
-            pr = table.vrToPr[vr];
-            if (pr != INT_MAX){
-                table.prNU[pr] = ins->registers[r1_2][NU];
+            if( ins.opcode == store ){  //TODO: this weights try to change on - output,store = -4
+                nodes[ins.line_num].edgeIn.push_back(Edge(prevIO.second, ins.line_num, 1));
+                nodes[prevIO.second].edgeOut.push_back(Edge(prevIO.second, ins.line_num, 1));
+            }else { //if( ins.opcode == load || ins.opcode == output)
+                if(prevIO.first == store){
+                    nodes[ins.line_num].edgeIn.push_back(Edge(prevIO.second, ins.line_num, 5));
+                    nodes[prevIO.second].edgeOut.push_back(Edge(prevIO.second, ins.line_num, 5));
+                }
             }
         }
-        return true;
     }
 
-    for (auto &r1_2: regUseDef.first) {
-//        cout << regUseDef.first.empty()<<" SetPR: R1_2 = "<< r1_2 <<endl;
+    void insertNode(const InctructionIR &ins) {
+        pair <list<int>, int> useDef = opUseDef(ins, VR);
 
-        vr = ins->registers[r1_2][VR];
-//        cout << "VR: "<< vr <<endl;
-        pr = table.vrToPr[vr];
-//        cout << "PR: "<< pr <<endl;
-
-        if (pr == INT_MAX) {
-            pr = getPr(block, ins, r1_2, table);
-            restore(block, ins, r1_2, table, vr);
-//            table.print();
-        }else if (ins->registers[r3][NU] == INT_MAX){
-            // If no R3 next use just update NU for PR if any
-            table.prNU[pr] = ins->registers[r1_2][NU];
-            continue;
+        if( useDef.second != INT_MAX){
+            regToNode[useDef.second] = ins.line_num;
         }
 
-        ins->registers[r1_2][PR] = pr;
-        table.markedReg[r1_2] = pr;
-        table.prNU[pr] = ins->registers[r1_2][NU];
-    }
-    // If last use clean PR
-    for (auto &r1_2: regUseDef.first) {
-        pr = ins->registers[r1_2][PR];
-        if (ins->registers[r1_2][NU] == INT_MAX && pr != INT_MAX) {
-            table.vrToPr[table.prToVr[pr]] = INT_MAX;
-            table.prToVr[pr] = INT_MAX;
-            table.prNU[pr] = INT_MAX;
-            table.prFree.push(pr);
-        }
-    }
-
-    table.clearMark();
-//    cout << "SetPR: R3 = "<< regUseDef.second<<endl;
-
-    if (ins->registers[r3][NU] == INT_MAX)  // if no next use true->delete inst
-        return true;
-    else if ( r3 != Rnone) {
-//        cout << "dVR: "<< vr <<endl;
-
-        if (ins->opcode == loadI){
-            vr = ins->registers[r3][VR];
-            table.vrRemat[vr] = make_pair(true, ins->constant);
-            return true;
-        }else{
-            pr = getPr(block, ins, r3, table);
-//        table.print();
-            ins->registers[r3][PR] = pr;
-//        cout << "dPR: "<< pr <<endl;
+        nodes[ins.line_num].latency = latencyTable[ins.opcode];
+        nodes[ins.line_num].ins = &ins;
+        cout<< "lat = "<< nodes[ins.line_num].latency<<" | ins@ = "<<nodes[ins.line_num].ins<<endl;
+//
+        for (const auto &x: useDef.first) {
+            const int usedId = regToNode[x];
+            nodes[ins.line_num].edgeIn.push_back(Edge(usedId, ins.line_num, nodes[usedId].latency));
+            nodes[usedId].edgeOut.push_back(Edge(usedId, ins.line_num, nodes[usedId].latency));
         }
 
-//        table.prMarked[pr] = true;
+        if( ins.opcode == load || ins.opcode == store || ins.opcode == output)
+            addEdgesIO(ins);
+
     }
-    return false;
+
+    void show()const{
+        for(const auto &x: nodes){
+            if(x.ins == 0){
+                return;
+            }
+            cout<< x.ins->line_num <<". ";
+            x.ins->showReg(VR);
+            cout<<"LATENCY = "<< x.latency<<endl;
+            cout<<"EdgeIN"<<endl;
+            for(const auto &in: x.edgeIn){
+                in.show();
+            }
+            cout<<"EdgeOUT"<<endl;
+            for(const auto &out: x.edgeOut){
+                out.show();
+            }
+            cout<<"***********************************************************"<<endl;
+        }
+    }
+};
+
+Graph createDependenceGraph(InstructionBlock &block, int regNum){
+
+    Graph dg(block.instructions.size(), regNum);
+    int i = 0;
+    for(auto &ins: block.instructions){
+        cout<<"1 RealINS = "<<&ins<<endl;
+        ins.line_num = i++;
+        cout<<"2 RealINS = "<<endl;
+        dg.insertNode(ins);
+        cout<<"3 RealINS = "<<endl;
+        dg.show();
+        cout<<"4 RealINS = "<<endl;
+    }
+//    int *p;
+//    p[545454444] = 5;
+    return dg;
 }
 
-int bottomUpAllocator(InstructionBlock &block, int vrNum, int prNum) {
+void schedule(InstructionBlock &block, int regNum){
 
-    TableVrPr table(vrNum, prNum, 40000);
-    bool delInst;
-//    cout << "table init: VRnum = "<< vrNum<< "| PRnum = "<< prNum<<endl;
+    Graph dg (createDependenceGraph(block, regNum));
 
-    for (auto it = block.instructions.begin(); it != block.instructions.end(); ) {
 
-//        cout<<"----------------------------------------------"<<endl;
-//        it->showReg(VR);
 
-        delInst = setPr(block.instructions, it, table);
-
-        if(delInst == true)
-            it = block.instructions.erase(it);
-        else
-            ++it;
-    }
-    return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
 //***********************************************************************************************************
 // HELPER FUNCTIONS
 
 // manageInput - parse command line
 tuple<InputMode, int, char *> manageInput(int argc, char *argv[]) {
 
-    tuple<InputMode, int, char *> input(make_tuple(s, 0, argv[argc - 1]));
+    tuple<InputMode, int, char *> input(make_tuple(h, 0, argv[argc - 1]));
 
-//    cout << "INPUT MODE"<<endl;
-
-    if( argc == 1)
-        get<0>(input) = h;
-    else if (argc == 2) {
-        get<0>(input) = p;
-        return input;
-    }else if(argc == 3){
-        int regNum = strToInt(argv[1]);
-
-        if ( regNum != INT_MAX){
-            if (3 <= regNum && regNum <= 64){
-                get<0>(input) = k;
-                get<1>(input) = regNum;
-            }else{
-                cerr << "Number of registers must be in interval [3, 64]" << endl;
-                exit(1);
-            }
-        }else if (strcmp(argv[1], "-x") == 0) {
-            get<0>(input) = x;
-        }
-        return input;
+    if( argc == 2 && strcmp(argv[1], "-h") != 0 ){
+        get<0>(input) = s;
     }
-
-    for (int i = 1; i < argc - 1; ++i) {
-
-        if (strcmp(argv[i], "-h") == 0) {
-            get<0>(input) = h;
-        } else if (strcmp(argv[i], "-x") == 0 && get<0>(input) < h) {
-            get<0>(input) = x;
-        } else if (strcmp(argv[i], "-r") == 0 && get<0>(input) < r) {
-            get<0>(input) = r;
-        } else if (strcmp(argv[i], "-p") == 0 && get<0>(input) < p) {
-            get<0>(input) = p;
-        } else if (strcmp(argv[i], "-s") == 0 && get<0>(input) < s) {
-            get<0>(input) = s;
-        }
-    }
-
 
     return input;
 }
@@ -709,7 +569,7 @@ void takeErrWord(int line_num, const string &line, int &char_pos, string &err_wo
 }
 
 
-
+//***********************************************************************************************************
 // MAIN FUNCTIONS Implementations
 
 // Scan - creates tokens from input file, check lexical errors, and check_semantics(make IR)
@@ -1376,54 +1236,20 @@ int main(int argc, char *argv[]) {
         case h:
             cout << "Optional flags:\n" <<
                  "        -h       prints this message\n" <<
-                 "        -x       renaming source registers to virtual registers\n" <<
-                 "        k        k - register allocation\n" <<
-                 "        -s       prints tokens in token stream\n" <<
-                 "        -p       invokes parser and reports on success or failure\n" <<
-                 "        -r       prints human readable version of parser's IR\n";
-            break;
-
-        case r:
-            irBlock = scan(get<2>(input), true, false);
-            irBlock.showIR();
-            break;
-
-        case p:
-            scan(get<2>(input), true, false);
+                 "    <file_name>  prints optimized reordered ILOC program \n";
             break;
 
         case s:
-            scan(get<2>(input), false, true);
-            break;
-
-        case x:
             irBlock = scan(get<2>(input), true, false);
 //            irBlock.showAllRegs();
 //            irBlock.showIR();
 
-            registerRenaming(irBlock);
+            int regNum = registerRenaming(irBlock);
 //            cout << "reg REName pass" << endl;
-//            irBlock.showAllRegs();
+            irBlock.showAllRegs();
 //            irBlock.showIR(SR);
-            irBlock.showIR(VR);
-            break;
-
-        case k:
-
-//            cout <<"BOTTOM UP ALLOCATOR PR"<<endl<<endl;
-            irBlock = scan(get<2>(input), true, false);
-            
-            int vrNum = registerRenaming(irBlock);
 //            irBlock.showIR(VR);
-
-            int prReg = get<1>(input);
-//            cout <<"Successful Renaming"<<endl<<endl;
-            bottomUpAllocator(irBlock, vrNum, prReg);
-//            cout <<"Successful Allocation"<<endl<<endl;
-
-            irBlock.showIR(PR);
-
-//            irBlock.showAllRegs();
+            schedule(irBlock, regNum);
             break;
     }
 
