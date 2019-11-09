@@ -47,7 +47,7 @@ enum RegNum {
     R1, R2, R3, Rnone
 };
 
-struct InctructionIR {
+struct InstructionIR {
     Operation opcode;
     int line_num;
     // R1, R2 => R3
@@ -55,7 +55,7 @@ struct InctructionIR {
     int registers[3][4];
     int constant;
 
-    InctructionIR() {
+    InstructionIR() {
         opcode = err;
         for (int i = 0; i < 12; ++i) {
             registers[i / 4][i % 4] = INT_MAX;
@@ -63,7 +63,7 @@ struct InctructionIR {
         constant = -1;
     }
 
-    InctructionIR(Operation s, int r1, int r2, int r3, int c, RegType rType = SR) {
+    InstructionIR(Operation s, int r1, int r2, int r3, int c, RegType rType = SR) {
         opcode = s;
         registers[R1][rType] = r1;
         registers[R2][rType] = r2;
@@ -100,7 +100,7 @@ struct InctructionIR {
 };
 
 struct InstructionBlock {
-    list <InctructionIR> instructions;
+    list <InstructionIR> instructions;
 // showIR - print IR in human readable form
 
     void showInstructions() const {
@@ -110,7 +110,7 @@ struct InstructionBlock {
             return;
         }
 
-        for (const InctructionIR &inst : instructions) {
+        for (const InstructionIR &inst : instructions) {
 
             switch (inst.opcode) {
 
@@ -152,7 +152,7 @@ struct InstructionBlock {
             return;
         }
 
-        for (const InctructionIR &inst : this->instructions) {
+        for (const InstructionIR &inst : this->instructions) {
             cout << inst.showReg(rt) << endl;
         }
     }
@@ -163,7 +163,7 @@ struct InstructionBlock {
             return;
         }
 
-        for (const InctructionIR &inst : this->instructions) {
+        for (const InstructionIR &inst : this->instructions) {
             inst.showAllRegs();
         }
     }
@@ -188,11 +188,11 @@ vector <pair<Category, string>> processLine(const string &line, int line_num, bo
 
 pair <State, Category> nextState(State state, char new_char, string &lexeme);
 
-InctructionIR parse(const vector <pair<Category, string>> &words, int line_num);
+InstructionIR parse(const vector <pair<Category, string>> &words, int line_num);
 
-InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category, string>> &words, int line_num);
+InstructionIR setupInstruction(InstructionIR &inst, const vector <pair<Category, string>> &words, int line_num);
 
-InctructionIR
+InstructionIR
 checkSemantics(const vector <pair<Category, string>> &words, const vector <Category> &grammar, int line_num);
 
 //***********************************************************************************************************
@@ -290,7 +290,7 @@ void opUse(int regs[][4], TableSrVr &table, int &vrName, RegNum Ri, const int &i
     table.lastUse[regs[Ri][SR]] = index;
 }
 
-void setVR(list<InctructionIR>::iterator ins, TableSrVr &table, int &vrName, const int &index) {
+void setVR(list<InstructionIR>::iterator ins, TableSrVr &table, int &vrName, const int &index) {
 
 //    cout << "SET VR"<<endl;
     switch (ins->opcode) {
@@ -351,7 +351,7 @@ int registerRenaming(InstructionBlock &block) {
 
 //***********************************************************************************************************
 //TODO: Scheduling
-pair<list<int>, int> opUseDef(InctructionIR ins, RegType reg) {
+pair<list<int>, int> opUseDef(const InstructionIR &ins, RegType reg) {
 //    cout<<"OP: "<<OperationStr[op]<<endl;
     switch (ins.opcode) {
         case load:
@@ -394,8 +394,10 @@ struct Node {
     list <Edge> edgeOut;
     list <Edge> edgeIn;
 
-    const InctructionIR *ins;
+    const InstructionIR *ins;
     int latency;   //maybe vector
+    int memLoc;
+    int constVal;
 
     Node() {
         latency = 0;
@@ -405,8 +407,11 @@ struct Node {
 
     void insertEdgeIn(Edge edge) {
         for (auto &x: edgeIn) {
-            if (x.from == edge.from && x.to == edge.to && x.weight < edge.weight) {
-                x.weight = edge.weight;
+            if (x.from == edge.from && x.to == edge.to) {
+                if (x.weight < edge.weight) {
+                    x.weight = edge.weight;
+                    x.typeIO = edge.typeIO;
+                }
                 return;
             }
         }
@@ -415,8 +420,11 @@ struct Node {
 
     void insertEdgeOut(Edge edge) {
         for (auto &x: edgeOut) {
-            if (x.from == edge.from && x.to == edge.to && x.weight < edge.weight) {
-                x.weight = edge.weight;
+            if (x.from == edge.from && x.to == edge.to) {
+                if (x.weight < edge.weight) {
+                    x.weight = edge.weight;
+                    x.typeIO = edge.typeIO;
+                }
                 return;
             }
         }
@@ -429,49 +437,55 @@ struct Graph {
     //    load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err
     int latencyTable[10] = {5, 5, 1, 1, 1, 3, 1, 1, 1, 1};
     vector<int> regToNode;
-    vector<array<int, 3>> listIO; //line_num, Opcode, mem_loc
+    vector <array<int, 3>> listIO; //line_num, Opcode, mem_loc
     vector<int> tableIO; //key - vr, val = memLoc
 
-    Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), tableIO(regNum) {}
+    Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), tableIO(regNum, INT_MAX) {}
 
     void insertEdge(Edge edge) {
         nodes[edge.from].insertEdgeOut(edge);
         nodes[edge.to].insertEdgeIn(edge);
     }
 
-    void addToListIO(const InstructionIR &ins, list<int> usedReg){
+    void addToListIO(const InstructionIR &ins, list<int> usedReg) {
         int tmp;
-        switch (ins.opcode){
-            case load:  tmp = tableIO[usedReg.front];
-
-            case store: tmp = tableIO[usedReg.back];
-
-            case output: tmp = ins.constant;
+        switch (ins.opcode) {
+            case load:
+                tmp = tableIO[usedReg.front()];
+                break;
+            case store:
+                tmp = tableIO[usedReg.back()];
+                break;
+            case output:
+                tmp = ins.constant;
+                break;
+            default:;
         }
         listIO.push_back({ins.line_num, ins.opcode, tmp});
 
     }
 
 
-    void addEdgesIO(const InctructionIR &ins, list<int> usedReg) {
+    void addEdgesIO(const InstructionIR &ins, list<int> usedReg) {
 
         array<int, 3> lastInst;
 
         addToListIO(ins, usedReg);
         lastInst = listIO.back();
+        nodes[lastInst[0]].memLoc = lastInst[2];    // write location into node in graph
 
-
-        if(lastInst[1] == store) {
+        if (lastInst[1] == store) {
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
-                if(lastInst[2] == *rit[2] || *rit[2] == INT_MAX){//TODO: this weights try to change on - output,store = -4
-                    insertEdge(Edge(*rit[0], lastInst[0], 1, true));
+                if (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2]) {
+                    //TODO: this weights try to change on - output,store = -4
+                    insertEdge(Edge((*rit)[0], lastInst[0], 1, true));
                     break;
                 }
             }
-        }else{ //if( load || output)
+        } else { //if( load || output)
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
-                if(*rit[1] == store && (lastInst[2] == *rit[2] || *rit[2] == INT_MAX)){
-                    insertEdge(Edge(*rit[0], lastInst[0], 5, true));
+                if ((*rit)[1] == store && (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2])) {
+                    insertEdge(Edge((*rit)[0], lastInst[0], 5, true));
                     break;
                 }
             }
@@ -479,16 +493,68 @@ struct Graph {
 
     }
 
-    void insertNode(const InctructionIR &ins) {
+    void constantPropagation(const InstructionIR &ins, const pair<list<int>, int> &useDef) {
+
+        if (ins.opcode == loadI) {
+            tableIO[useDef.second] = ins.constant;
+            return;
+        }
+        //add, sub, mult, lshift, rshift
+
+        if (useDef.first.size() == 1 && tableIO[useDef.first.front()] != INT_MAX) {
+
+            switch (ins.opcode) {
+                case add:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] << 1;
+                    return;
+                case sub:
+                    tableIO[useDef.second] = 0;
+                    return;
+                case mult:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.front()];
+                    return;
+                case lshift:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.front()];
+                    return;
+                case rshift:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.front()];
+                    return;
+                default:;
+            }
+
+        } else if (useDef.first.size() == 2 &&
+                   tableIO[useDef.first.front()] != INT_MAX && tableIO[useDef.first.back()] != INT_MAX) {
+
+            switch (ins.opcode) {
+                case add:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] + tableIO[useDef.first.back()];
+                    return;
+                case sub:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] - tableIO[useDef.first.back()];
+                    return;
+                case mult:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.back()];
+                    return;
+                case lshift:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.back()];
+                    return;
+                case rshift:
+                    tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.back()];
+                    return;
+                default:;
+            }
+        }
+
+        return;
+    }
+
+
+    void insertNode(const InstructionIR &ins) {
         pair<list<int>, int> useDef = opUseDef(ins, VR);
 
         if (useDef.second != INT_MAX) {
             regToNode[useDef.second] = ins.line_num;
         }
-        if( ins.opcode == loadI){
-            tableIO[useDef.second] = ins.constant;
-        }
-
 
         nodes[ins.line_num].latency = latencyTable[ins.opcode];
         nodes[ins.line_num].ins = &ins;
@@ -499,20 +565,28 @@ struct Graph {
 
         if (ins.opcode == load || ins.opcode == store || ins.opcode == output)
             addEdgesIO(ins, useDef.first);
+        else
+            constantPropagation(ins, useDef);
 
 
     }
 
-    void show(bool createFile = false, string fileName = "") const {
+    void show(string fileName = "") const {
         stringstream node_stream;
         stringstream edge_stream;
 
+
+        int vrDef;
         node_stream << "digraph G {" << endl;
         for (const auto &x: nodes) {
             if (x.ins == 0) {
                 continue;
             }
+            vrDef = opUseDef(*x.ins, VR).second;
+
             node_stream << x.ins->line_num << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
+                        << "\n Mem = " << (x.memLoc != INT_MAX ? x.memLoc : -1)
+                        <<"| Const = "<< (vrDef != INT_MAX ? (tableIO[vrDef] != INT_MAX ? tableIO[vrDef] : -1) : -1)
                         << "\" ];" << endl;
 
             for (const auto &e: x.edgeOut)
@@ -526,7 +600,7 @@ struct Graph {
 
         cout << "fileName = " << fileName << endl;
 
-        if (createFile) {
+        if (fileName != "") {
             ofstream graphFile(fileName, ios::out);
 
             if (graphFile.is_open()) {
@@ -540,6 +614,7 @@ struct Graph {
         }
 
     }
+
 };
 
 Graph createDependenceGraph(InstructionBlock &block, int regNum) {
@@ -561,7 +636,7 @@ void schedule(InstructionBlock &block, int regNum, string gFileName) {
 
     Graph dg(createDependenceGraph(block, regNum));
 
-    dg.show(true, "./graphviz/g_" + gFileName.substr(7, 8) + ".txt");
+    dg.show("./graphviz/g_" + gFileName.substr(7, 8) + ".txt");
 
 }
 
@@ -663,7 +738,7 @@ InstructionBlock scan(char *filename, bool check_semantics = false, bool display
     int inst_count = 0;
     vector <pair<Category, string>> result;
 
-    InctructionIR inst;
+    InstructionIR inst;
     InstructionBlock block;
     int error_count = 0;
 
@@ -1213,7 +1288,7 @@ pair <State, Category> nextState(State state, char new_char, string &lexeme) {
 }
 
 // parse - check semantics for every Category
-InctructionIR parse(const vector <pair<Category, string>> &words, int line_num) {
+InstructionIR parse(const vector <pair<Category, string>> &words, int line_num) {
 
     switch (words[0].first) {
         case MEMOP:
@@ -1233,12 +1308,12 @@ InctructionIR parse(const vector <pair<Category, string>> &words, int line_num) 
 
         default:
             cerr << "ERROR: " << line_num << ": Syntax: Undefined operation \"" << words[0].second << "\"" << endl;
-            return InctructionIR();
+            return InstructionIR();
     }
 }
 
 // setupInstruction - creates instruction IR from tokens
-InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category, string>> &words, int line_num) {
+InstructionIR setupInstruction(InstructionIR &inst, const vector <pair<Category, string>> &words, int line_num) {
     // SETUP INSTRUCTION_IR
 
     inst.opcode = strToOperation(words[0].second);
@@ -1271,10 +1346,10 @@ InctructionIR setupInstruction(InctructionIR &inst, const vector <pair<Category,
 }
 
 // checkSemantics - compare grammar with tokens
-InctructionIR
+InstructionIR
 checkSemantics(const vector <pair<Category, string>> &words, const vector <Category> &grammar, int line_num) {
 
-    InctructionIR inst;
+    InstructionIR inst;
     int i;
 
     if (words.size() < grammar.size()) {
