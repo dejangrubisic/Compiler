@@ -15,6 +15,7 @@
 #include <stack>
 #include <climits>
 #include <unordered_map>
+#include <sstream>
 
 using namespace std;
 
@@ -70,19 +71,21 @@ struct InctructionIR {
         constant = c;
     }
 
-    void showReg(RegType RT) const {
-        string rt = "r";//RegTypeStr[RT];
+    string showReg(RegType RT) const {
+        string rt = RegTypeStr[RT];//"r";//
         string s1 = (opcode == loadI || opcode == output) ? to_string(constant) : "";
+        stringstream res;
 
-        cout << OperationStr[opcode] << " "
-             << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
-             << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
-             << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "") << endl;
+        res << OperationStr[opcode] << " "
+            << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
+            << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
+            << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "");// << endl;
+        return res.str();
     }
 
     void showAllRegs() const {
         int tmpReg;
-        cout << line_num<< " opcode " << "\t Const " << "\tR1 (SR,VR,PR,LU) " << "    R2   " << "\t  R3 " << endl;
+        cout << line_num << " opcode " << "\t Const " << "\tR1 (SR,VR,PR,LU) " << "    R2   " << "\t  R3 " << endl;
         cout << OperationStr[opcode] << "\t" << constant << "\t";
         for (int i = 0; i < 3; ++i) {
             for (int j = 3; j >= 0; --j) {
@@ -150,7 +153,7 @@ struct InstructionBlock {
         }
 
         for (const InctructionIR &inst : this->instructions) {
-            inst.showReg(rt);
+            cout << inst.showReg(rt) << endl;
         }
     }
 
@@ -169,6 +172,7 @@ struct InstructionBlock {
 enum InputMode {
     s, h
 };
+
 // Parsing funcitons
 tuple<InputMode, int, char *> manageInput(int argc, char *argv[]);
 
@@ -219,7 +223,7 @@ struct TableSrVr {
         delete[] lastUse;
     }
 
-    void show() const{
+    void show() const {
         cout << endl << "srToVr: ";
         for (int i = 0; i < n; ++i)
             cout << srToVr[i] << ", ";
@@ -344,9 +348,10 @@ int registerRenaming(InstructionBlock &block) {
 
     return vrName;
 }
+
 //***********************************************************************************************************
 //TODO: Scheduling
-pair <list<int>, int> opUseDef(InctructionIR ins, RegType reg) {
+pair<list<int>, int> opUseDef(InctructionIR ins, RegType reg) {
 //    cout<<"OP: "<<OperationStr[op]<<endl;
     switch (ins.opcode) {
         case load:
@@ -354,134 +359,209 @@ pair <list<int>, int> opUseDef(InctructionIR ins, RegType reg) {
         case loadI:
             return make_pair(list < int > {}, ins.registers[R3][reg]);
         case store:
-            return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R3][reg]}, INT_MAX);
+            if (ins.registers[R1][reg] != ins.registers[R3][reg])
+                return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R3][reg]}, INT_MAX);
+            else
+                return make_pair(list < int > {ins.registers[R1][reg]}, INT_MAX);
         case output:
             return make_pair(list < int > {}, INT_MAX);
         default: //ARITH
-            return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R2][reg]}, ins.registers[R3][reg]);
+            if (ins.registers[R1][reg] != ins.registers[R2][reg])
+                return make_pair(list < int > {ins.registers[R1][reg], ins.registers[R2][reg]}, ins.registers[R3][reg]);
+            else
+                return make_pair(list < int > {ins.registers[R1][reg]}, ins.registers[R3][reg]);
     }
 }
 
 
-struct Edge{
+struct Edge {
     int from;
     int to;
     int weight;
+    bool typeIO;
 
-    Edge(int from, int to, int weight):from(from), to(to), weight(weight){}
+    Edge(int from, int to, int weight, bool IO = false) : from(from), to(to), weight(weight), typeIO(IO) {}
 
-    void show()const{
-        cout << from << " ---> "<<to<<" | weight = "<<weight<<endl;
+    string show() const {
+        stringstream ss;
+
+        ss << from << " -> " << to << " [ label = \"" << weight << (typeIO ? " (IO)" : "") << "\" ];";
+        return ss.str();
     }
 };
 
-struct Node{
-    list<Edge> edgeOut;
-    list<Edge> edgeIn;
+struct Node {
+    list <Edge> edgeOut;
+    list <Edge> edgeIn;
 
-    const InctructionIR *ins ;
+    const InctructionIR *ins;
     int latency;   //maybe vector
 
-    Node(){
+    Node() {
         latency = 0;
         ins = 0;
+        memLoc = INT_MAX;
+    }
+
+    void insertEdgeIn(Edge edge) {
+        for (auto &x: edgeIn) {
+            if (x.from == edge.from && x.to == edge.to && x.weight < edge.weight) {
+                x.weight = edge.weight;
+                return;
+            }
+        }
+        edgeIn.push_back(edge);
+    }
+
+    void insertEdgeOut(Edge edge) {
+        for (auto &x: edgeOut) {
+            if (x.from == edge.from && x.to == edge.to && x.weight < edge.weight) {
+                x.weight = edge.weight;
+                return;
+            }
+        }
+        edgeOut.push_back(edge);
     }
 };
 
-struct Graph{
-    vector< Node > nodes;
+struct Graph {
+    vector <Node> nodes;
     //    load, store, loadI, add, sub, mult, lshift, rshift, output, nop, err
     int latencyTable[10] = {5, 5, 1, 1, 1, 3, 1, 1, 1, 1};
     vector<int> regToNode;
-    stack< pair<Operation, int> > depIO;
+    vector<array<int, 3>> listIO; //line_num, Opcode, mem_loc
+    vector<int> tableIO; //key - vr, val = memLoc
 
-    Graph(int insNum, int regNum):nodes(insNum),regToNode(regNum){}
+    Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), tableIO(regNum) {}
 
-    void addEdgesIO(const InctructionIR &ins){
+    void insertEdge(Edge edge) {
+        nodes[edge.from].insertEdgeOut(edge);
+        nodes[edge.to].insertEdgeIn(edge);
+    }
 
-        if(depIO.empty()) {
-            depIO.push(make_pair(ins.opcode, ins.line_num));
-        }else{
-                const pair<Operation, int> prevIO = depIO.top();
+    void addToListIO(const InstructionIR &ins, list<int> usedReg){
+        int tmp;
+        switch (ins.opcode){
+            case load:  tmp = tableIO[usedReg.front];
 
-            if( ins.opcode == store ){  //TODO: this weights try to change on - output,store = -4
-                nodes[ins.line_num].edgeIn.push_back(Edge(prevIO.second, ins.line_num, 1));
-                nodes[prevIO.second].edgeOut.push_back(Edge(prevIO.second, ins.line_num, 1));
-            }else { //if( ins.opcode == load || ins.opcode == output)
-                if(prevIO.first == store){
-                    nodes[ins.line_num].edgeIn.push_back(Edge(prevIO.second, ins.line_num, 5));
-                    nodes[prevIO.second].edgeOut.push_back(Edge(prevIO.second, ins.line_num, 5));
+            case store: tmp = tableIO[usedReg.back];
+
+            case output: tmp = ins.constant;
+        }
+        listIO.push_back({ins.line_num, ins.opcode, tmp});
+
+    }
+
+
+    void addEdgesIO(const InctructionIR &ins, list<int> usedReg) {
+
+        array<int, 3> lastInst;
+
+        addToListIO(ins, usedReg);
+        lastInst = listIO.back();
+
+
+        if(lastInst[1] == store) {
+            for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
+                if(lastInst[2] == *rit[2] || *rit[2] == INT_MAX){//TODO: this weights try to change on - output,store = -4
+                    insertEdge(Edge(*rit[0], lastInst[0], 1, true));
+                    break;
+                }
+            }
+        }else{ //if( load || output)
+            for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
+                if(*rit[1] == store && (lastInst[2] == *rit[2] || *rit[2] == INT_MAX)){
+                    insertEdge(Edge(*rit[0], lastInst[0], 5, true));
+                    break;
                 }
             }
         }
+
     }
 
     void insertNode(const InctructionIR &ins) {
-        pair <list<int>, int> useDef = opUseDef(ins, VR);
+        pair<list<int>, int> useDef = opUseDef(ins, VR);
 
-        if( useDef.second != INT_MAX){
+        if (useDef.second != INT_MAX) {
             regToNode[useDef.second] = ins.line_num;
         }
+        if( ins.opcode == loadI){
+            tableIO[useDef.second] = ins.constant;
+        }
+
 
         nodes[ins.line_num].latency = latencyTable[ins.opcode];
         nodes[ins.line_num].ins = &ins;
-        cout<< "lat = "<< nodes[ins.line_num].latency<<" | ins@ = "<<nodes[ins.line_num].ins<<endl;
-//
+
         for (const auto &x: useDef.first) {
-            const int usedId = regToNode[x];
-            nodes[ins.line_num].edgeIn.push_back(Edge(usedId, ins.line_num, nodes[usedId].latency));
-            nodes[usedId].edgeOut.push_back(Edge(usedId, ins.line_num, nodes[usedId].latency));
+            insertEdge(Edge(regToNode[x], ins.line_num, nodes[regToNode[x]].latency));
         }
 
-        if( ins.opcode == load || ins.opcode == store || ins.opcode == output)
-            addEdgesIO(ins);
+        if (ins.opcode == load || ins.opcode == store || ins.opcode == output)
+            addEdgesIO(ins, useDef.first);
+
 
     }
 
-    void show()const{
-        for(const auto &x: nodes){
-            if(x.ins == 0){
-                return;
+    void show(bool createFile = false, string fileName = "") const {
+        stringstream node_stream;
+        stringstream edge_stream;
+
+        node_stream << "digraph G {" << endl;
+        for (const auto &x: nodes) {
+            if (x.ins == 0) {
+                continue;
             }
-            cout<< x.ins->line_num <<". ";
-            x.ins->showReg(VR);
-            cout<<"LATENCY = "<< x.latency<<endl;
-            cout<<"EdgeIN"<<endl;
-            for(const auto &in: x.edgeIn){
-                in.show();
-            }
-            cout<<"EdgeOUT"<<endl;
-            for(const auto &out: x.edgeOut){
-                out.show();
-            }
-            cout<<"***********************************************************"<<endl;
+            node_stream << x.ins->line_num << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
+                        << "\" ];" << endl;
+
+            for (const auto &e: x.edgeOut)
+                edge_stream << e.show() << endl;
         }
+        node_stream << edge_stream.str();
+        node_stream << "}" << endl;
+
+        cout << node_stream.str();
+
+
+        cout << "fileName = " << fileName << endl;
+
+        if (createFile) {
+            ofstream graphFile(fileName, ios::out);
+
+            if (graphFile.is_open()) {
+                graphFile << node_stream.str();
+//                graphFile.flush();
+                graphFile.close();
+            } else {
+                cerr << "Not Created Graphviz file : " << fileName << endl;
+            }
+
+        }
+
     }
 };
 
-Graph createDependenceGraph(InstructionBlock &block, int regNum){
+Graph createDependenceGraph(InstructionBlock &block, int regNum) {
 
     Graph dg(block.instructions.size(), regNum);
     int i = 0;
-    for(auto &ins: block.instructions){
-        cout<<"1 RealINS = "<<&ins<<endl;
+    for (auto &ins: block.instructions) {
         ins.line_num = i++;
-        cout<<"2 RealINS = "<<endl;
         dg.insertNode(ins);
-        cout<<"3 RealINS = "<<endl;
-        dg.show();
-        cout<<"4 RealINS = "<<endl;
+//        dg.show();
+
     }
 //    int *p;
 //    p[545454444] = 5;
     return dg;
 }
 
-void schedule(InstructionBlock &block, int regNum){
+void schedule(InstructionBlock &block, int regNum, string gFileName) {
 
-    Graph dg (createDependenceGraph(block, regNum));
+    Graph dg(createDependenceGraph(block, regNum));
 
-
+    dg.show(true, "./graphviz/g_" + gFileName.substr(7, 8) + ".txt");
 
 }
 
@@ -504,7 +584,7 @@ tuple<InputMode, int, char *> manageInput(int argc, char *argv[]) {
 
     tuple<InputMode, int, char *> input(make_tuple(h, 0, argv[argc - 1]));
 
-    if( argc == 2 && strcmp(argv[1], "-h") != 0 ){
+    if (argc == 2 && strcmp(argv[1], "-h") != 0) {
         get<0>(input) = s;
     }
 
@@ -520,7 +600,7 @@ int strToInt(const string &str) {
         i = 1;
     }
     for (; i < int(str.length()); ++i) {
-        if(str[i] < '0' || str[i] > '9')
+        if (str[i] < '0' || str[i] > '9')
             return INT_MAX;
         n = 10 * n + (str[i] - '0');
     }
@@ -1246,10 +1326,11 @@ int main(int argc, char *argv[]) {
 
             int regNum = registerRenaming(irBlock);
 //            cout << "reg REName pass" << endl;
-            irBlock.showAllRegs();
+//            irBlock.showAllRegs();
 //            irBlock.showIR(SR);
 //            irBlock.showIR(VR);
-            schedule(irBlock, regNum);
+            schedule(irBlock, regNum, get<2>(input));
+
             break;
     }
 

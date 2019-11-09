@@ -5,7 +5,7 @@
       <paths name="CLEAR">
         <serverdata>
           <mappings>
-            <mapping deploy="/storage-home/d/dx4/compilers/p1" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/storage-home/d/dx4/compilers/p3" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
