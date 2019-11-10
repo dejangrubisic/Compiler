@@ -397,7 +397,6 @@ struct Node {
     const InstructionIR *ins;
     int latency;   //maybe vector
     int memLoc;
-    int constVal;
 
     Node() {
         latency = 0;
@@ -497,6 +496,7 @@ struct Graph {
 
         if (ins.opcode == loadI) {
             tableIO[useDef.second] = ins.constant;
+            nodes[ins.line_num].memLoc = ins.constant;
             return;
         }
         //add, sub, mult, lshift, rshift
@@ -506,19 +506,19 @@ struct Graph {
             switch (ins.opcode) {
                 case add:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] << 1;
-                    return;
+                    break;
                 case sub:
                     tableIO[useDef.second] = 0;
-                    return;
+                    break;
                 case mult:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.front()];
-                    return;
+                    break;
                 case lshift:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.front()];
-                    return;
+                    break;
                 case rshift:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.front()];
-                    return;
+                    break;
                 default:;
             }
 
@@ -528,23 +528,23 @@ struct Graph {
             switch (ins.opcode) {
                 case add:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] + tableIO[useDef.first.back()];
-                    return;
+                    break;
                 case sub:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] - tableIO[useDef.first.back()];
-                    return;
+                    break;
                 case mult:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.back()];
-                    return;
+                    break;
                 case lshift:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.back()];
-                    return;
+                    break;
                 case rshift:
                     tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.back()];
-                    return;
+                    break;
                 default:;
             }
         }
-
+        nodes[ins.line_num].memLoc = tableIO[useDef.second];
         return;
     }
 
@@ -575,7 +575,6 @@ struct Graph {
         stringstream node_stream;
         stringstream edge_stream;
 
-
         int vrDef;
         node_stream << "digraph G {" << endl;
         for (const auto &x: nodes) {
@@ -586,7 +585,6 @@ struct Graph {
 
             node_stream << x.ins->line_num << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
                         << "\n Mem = " << (x.memLoc != INT_MAX ? x.memLoc : -1)
-                        <<"| Const = "<< (vrDef != INT_MAX ? (tableIO[vrDef] != INT_MAX ? tableIO[vrDef] : -1) : -1)
                         << "\" ];" << endl;
 
             for (const auto &e: x.edgeOut)
