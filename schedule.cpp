@@ -16,6 +16,9 @@
 #include <climits>
 #include <unordered_map>
 #include <sstream>
+#include <set>
+#include <algorithm>
+
 
 using namespace std;
 
@@ -63,6 +66,8 @@ struct InstructionIR {
         constant = -1;
     }
 
+    InstructionIR(int line, Operation s):line_num(line), opcode(s){}
+
     InstructionIR(Operation s, int r1, int r2, int r3, int c, RegType rType = SR) {
         opcode = s;
         registers[R1][rType] = r1;
@@ -76,10 +81,13 @@ struct InstructionIR {
         string s1 = (opcode == loadI || opcode == output) ? to_string(constant) : "";
         stringstream res;
 
-        res << OperationStr[opcode] << " "
-            << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
-            << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
-            << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "");// << endl;
+        res << OperationStr[opcode] << " ";
+        if(opcode != nop){
+            res << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
+                << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
+                << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "");// << endl;
+        }
+
         return res.str();
     }
 
@@ -351,6 +359,76 @@ int registerRenaming(InstructionBlock &block) {
 
 //***********************************************************************************************************
 //TODO: Scheduling
+
+struct PriorityQueue{
+    set<pair<int, int>> q;
+    
+    PriorityQueue(){}
+
+    bool empty(){
+        return q.empty();
+    }
+
+    int size(){
+        return q.size();
+    }
+
+    bool contains(int node_id){
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int,int>& p ){ return p.second == node_id; });
+        if( it != q.end())
+            return true;
+        else
+            return false;
+    }
+
+    pair<int, int> get(set< pair<int, int> >::iterator it){
+        return *it;
+    }
+
+    void decKey(pair<int, int> member, int newKey){
+
+        auto it = q.find(member);
+
+        if (it != q.end()){
+            q.erase(it);
+            q.insert(make_pair(newKey, member.second));
+        }
+        else
+            insertKey(newKey, member.second);
+
+    }
+
+    void insertKey(int key, int value){
+        q.insert(make_pair(key, value));
+    }
+
+    set< pair<int, int> >::iterator erase(set< pair<int, int> >::iterator it){
+        if(it == q.end())
+            return it;
+        return q.erase(it);
+    }
+    void erase(int node_id){
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int,int>& p ){ return p.second == node_id; });
+        if(it != q.end())
+            q.erase(it);
+    }
+
+    pair<int, int> getMin(){
+        auto it = q.begin();
+        pair<int, int> min = *it;
+        q.erase(it);
+        return min;
+    }
+
+    pair<int, int> getMax(){
+        auto rit = q.rbegin();
+        pair<int, int> max = *rit;
+        q.erase(next(rit).base());
+        return max;
+    }
+
+};
+
 pair<list<int>, int> opUseDef(const InstructionIR &ins, RegType reg) {
 //    cout<<"OP: "<<OperationStr[op]<<endl;
     switch (ins.opcode) {
@@ -394,12 +472,14 @@ struct Node {
     list <Edge> edgeOut;
     list <Edge> edgeIn;
 
+    int id;
     const InstructionIR *ins;
-    int latency;   //maybe vector
+    int priority;   // - priority of scheduling
     int memLoc;
+    int latency;
 
     Node() {
-        latency = 0;
+        priority = 0;
         ins = 0;
         memLoc = INT_MAX;
     }
@@ -437,9 +517,10 @@ struct Graph {
     int latencyTable[10] = {5, 5, 1, 1, 1, 3, 1, 1, 1, 1};
     vector<int> regToNode;
     vector <array<int, 3>> listIO; //line_num, Opcode, mem_loc
-    vector<int> tableIO; //key - vr, val = memLoc
-
-    Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), tableIO(regNum, INT_MAX) {}
+    vector<int> vrConst; //key - vr, val = memLoc
+    vector<int> vrLatency; //key - vr, val = latency of instr that defines vr
+    
+    Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), vrConst(regNum, INT_MAX), vrLatency(regNum) {}
 
     void insertEdge(Edge edge) {
         nodes[edge.from].insertEdgeOut(edge);
@@ -450,10 +531,10 @@ struct Graph {
         int tmp;
         switch (ins.opcode) {
             case load:
-                tmp = tableIO[usedReg.front()];
+                tmp = vrConst[usedReg.front()];
                 break;
             case store:
-                tmp = tableIO[usedReg.back()];
+                tmp = vrConst[usedReg.back()];
                 break;
             case output:
                 tmp = ins.constant;
@@ -463,7 +544,6 @@ struct Graph {
         listIO.push_back({ins.line_num, ins.opcode, tmp});
 
     }
-
 
     void addEdgesIO(const InstructionIR &ins, list<int> usedReg) {
 
@@ -495,72 +575,74 @@ struct Graph {
     void constantPropagation(const InstructionIR &ins, const pair<list<int>, int> &useDef) {
 
         if (ins.opcode == loadI) {
-            tableIO[useDef.second] = ins.constant;
+            vrConst[useDef.second] = ins.constant;
             nodes[ins.line_num].memLoc = ins.constant;
             return;
         }
         //add, sub, mult, lshift, rshift
 
-        if (useDef.first.size() == 1 && tableIO[useDef.first.front()] != INT_MAX) {
+        if (useDef.first.size() == 1 && vrConst[useDef.first.front()] != INT_MAX) {
 
             switch (ins.opcode) {
                 case add:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] << 1;
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] << 1;
                     break;
                 case sub:
-                    tableIO[useDef.second] = 0;
+                    vrConst[useDef.second] = 0;
                     break;
                 case mult:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.front()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] * vrConst[useDef.first.front()];
                     break;
                 case lshift:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.front()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] << vrConst[useDef.first.front()];
                     break;
                 case rshift:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.front()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] >> vrConst[useDef.first.front()];
                     break;
                 default:;
             }
 
         } else if (useDef.first.size() == 2 &&
-                   tableIO[useDef.first.front()] != INT_MAX && tableIO[useDef.first.back()] != INT_MAX) {
+                   vrConst[useDef.first.front()] != INT_MAX && vrConst[useDef.first.back()] != INT_MAX) {
 
             switch (ins.opcode) {
                 case add:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] + tableIO[useDef.first.back()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] + vrConst[useDef.first.back()];
                     break;
                 case sub:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] - tableIO[useDef.first.back()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] - vrConst[useDef.first.back()];
                     break;
                 case mult:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] * tableIO[useDef.first.back()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] * vrConst[useDef.first.back()];
                     break;
                 case lshift:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] << tableIO[useDef.first.back()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] << vrConst[useDef.first.back()];
                     break;
                 case rshift:
-                    tableIO[useDef.second] = tableIO[useDef.first.front()] >> tableIO[useDef.first.back()];
+                    vrConst[useDef.second] = vrConst[useDef.first.front()] >> vrConst[useDef.first.back()];
                     break;
                 default:;
             }
         }
-        nodes[ins.line_num].memLoc = tableIO[useDef.second];
+        nodes[ins.line_num].memLoc = vrConst[useDef.second];
         return;
     }
 
-
     void insertNode(const InstructionIR &ins) {
         pair<list<int>, int> useDef = opUseDef(ins, VR);
+        int id = ins.line_num;
 
         if (useDef.second != INT_MAX) {
-            regToNode[useDef.second] = ins.line_num;
+            regToNode[useDef.second] = id;
+            vrLatency[useDef.second] = latencyTable[ins.opcode];
         }
+        nodes[id].id = id;
+        nodes[id].ins = &ins;
+        nodes[id].latency = latencyTable[ins.opcode];
 
-        nodes[ins.line_num].latency = latencyTable[ins.opcode];
-        nodes[ins.line_num].ins = &ins;
 
         for (const auto &x: useDef.first) {
-            insertEdge(Edge(regToNode[x], ins.line_num, nodes[regToNode[x]].latency));
+            insertEdge(Edge(regToNode[x], id, vrLatency[x] ));
         }
 
         if (ins.opcode == load || ins.opcode == store || ins.opcode == output)
@@ -569,6 +651,148 @@ struct Graph {
             constantPropagation(ins, useDef);
 
 
+    }
+
+    void relax(const Edge edge, PriorityQueue &q){
+        int oldDist = nodes[edge.from].priority;    // distTo[edge.from];
+        int newDist = nodes[edge.to].priority + edge.weight; // distTo[edge.to]
+
+        if( oldDist < newDist ){
+            nodes[edge.from].priority = newDist;
+            q.decKey(make_pair(oldDist, edge.from), newDist);
+        }
+    }
+
+    void computePriority(){
+        PriorityQueue qmin;
+        pair<int, int> nodeMin; // dist, line_num
+
+        for( auto rit = nodes.rbegin(); rit != nodes.rend(); rit++){
+            //all nodes from back to start
+            if(rit->priority != 0)
+                continue;
+
+            qmin.insertKey(0, rit->id);
+
+            while(!qmin.empty()){
+                nodeMin = qmin.getMin();
+
+                for(const auto &edge: nodes[nodeMin.second].edgeIn ){
+                    relax(edge, qmin);
+                }
+            }
+        }
+
+        return;
+    }
+
+    pair<int, int> findReadyIns(set<pair<int,int>> &q){
+
+        int funcUnit[3] = {INT_MAX, INT_MAX, INT_MAX};
+        int cnt = 0;
+        int insId;
+
+        for(auto it=q.begin(); it != q.end() || cnt == 2;it++){
+            insId = it->second;
+
+            if( nodes[insId].ins->opcode == load || nodes[insId].ins->opcode == store ){
+                if(funcUnit[0] == INT_MAX){
+                    funcUnit[0] = insId;
+                    cnt++;
+                }
+            }else if(nodes[insId].ins->opcode == mult){
+                if(funcUnit[1] == INT_MAX){
+                    funcUnit[1] = insId;
+                    cnt++;
+                }
+            }else{ // not load, store or mult
+                if(funcUnit[2] == INT_MAX){
+                    funcUnit[2] = insId;
+                }else{
+                    return make_pair(funcUnit[2], insId);
+                }
+                cnt++;
+            }
+        }
+
+        if(funcUnit[0] == INT_MAX){
+            return make_pair(funcUnit[2], funcUnit[1]);
+        }
+        else if(funcUnit[1] == INT_MAX){
+            return make_pair(funcUnit[0], funcUnit[2]);
+        }
+        else{
+            return make_pair(funcUnit[0], funcUnit[1]);
+        }
+
+    }
+
+    void updateQReady(PriorityQueue &qActive, PriorityQueue &qReady, int cycle, vector<int> depCnt){
+        list<int> finishedIns;
+        auto it=qActive.q.begin();
+
+        for(; it != qActive.q.end() && it->first <= cycle; it++){
+            finishedIns.push_back(it->second);
+        }
+
+        qActive.q.erase(qActive.q.begin(), it);
+
+        for(const auto &ins: finishedIns){
+            for(const auto &eOut: nodes[ins].edgeOut) {
+                if( --depCnt[eOut.to] == 0){
+                    qReady.insertKey(-nodes[eOut.to].priority, eOut.to);
+                }
+            }
+        }
+
+    }
+
+    list< pair<InstructionIR, InstructionIR> > schedule(){
+
+        list<pair<InstructionIR, InstructionIR>> listTwoIns;
+        pair<InstructionIR, InstructionIR> currentIns;
+        pair<int, int> twoInsIds;
+        vector<int> dependencyCounter(nodes.size());
+
+        int cycle = 0;
+        PriorityQueue qReady;    //priority, ins_id
+        PriorityQueue qActive;     //finish_time, ins_id
+
+
+        for( const auto &node: nodes){
+            dependencyCounter[node.id] = node.edgeIn.size();
+            if( node.edgeIn.empty()){
+                qReady.insertKey(-node.priority, node.id);
+            }
+        }
+
+        while( !qReady.empty() || !qActive.empty() ){
+
+            twoInsIds = findReadyIns(qReady.q);
+
+            currentIns = make_pair(InstructionIR(cycle, nop), InstructionIR(cycle, nop));
+
+            if(twoInsIds.first != INT_MAX){
+                qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
+                qReady.erase(twoInsIds.first);
+                currentIns.first = *nodes[twoInsIds.first].ins;
+            }
+
+            if(twoInsIds.second != INT_MAX){
+                qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
+                qReady.erase(twoInsIds.second);
+                currentIns.second = *nodes[twoInsIds.second].ins;
+            }
+
+            updateQReady(qActive, qReady, cycle, dependencyCounter);
+
+            listTwoIns.push_back( currentIns );
+            cycle++;
+        }
+
+
+
+        return listTwoIns;
     }
 
     void show(string fileName = "") const {
@@ -583,8 +807,9 @@ struct Graph {
             }
             vrDef = opUseDef(*x.ins, VR).second;
 
-            node_stream << x.ins->line_num << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
+            node_stream << x.id << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
                         << "\n Mem = " << (x.memLoc != INT_MAX ? x.memLoc : -1)
+                        << " | Pri = " << (x.priority)
                         << "\" ];" << endl;
 
             for (const auto &e: x.edgeOut)
@@ -633,9 +858,16 @@ Graph createDependenceGraph(InstructionBlock &block, int regNum) {
 void schedule(InstructionBlock &block, int regNum, string gFileName) {
 
     Graph dg(createDependenceGraph(block, regNum));
+    list<pair<InstructionIR, InstructionIR>> newSchedule;
 
-    dg.show("./graphviz/g_" + gFileName.substr(7, 8) + ".txt");
+    dg.computePriority();
 
+    dg.show("./graphviz/g_" + gFileName.substr(7, 9) + ".txt");
+
+    newSchedule = dg.schedule();
+    for(const auto &ins: newSchedule){
+        cout<< "[ "<<ins.first.showReg(VR) <<"\t\t, "<<ins.second.showReg(VR)<<" ]"<<endl;
+    }
 }
 
 
