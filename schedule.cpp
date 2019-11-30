@@ -66,7 +66,7 @@ struct InstructionIR {
         constant = -1;
     }
 
-    InstructionIR(int line, Operation s):line_num(line), opcode(s){}
+    InstructionIR(int line, Operation s) : line_num(line), opcode(s) {}
 
     InstructionIR(Operation s, int r1, int r2, int r3, int c, RegType rType = SR) {
         opcode = s;
@@ -77,12 +77,12 @@ struct InstructionIR {
     }
 
     string showReg(RegType RT) const {
-        string rt = RegTypeStr[RT];//"r";//
+        string rt = "r"; //RegTypeStr[RT];//"r";//
         string s1 = (opcode == loadI || opcode == output) ? to_string(constant) : "";
         stringstream res;
 
         res << OperationStr[opcode] << " ";
-        if(opcode != nop){
+        if (opcode != nop) {
             res << ((registers[R1][RT] != INT_MAX) ? rt + to_string(registers[R1][RT]) : s1)
                 << ((registers[R2][RT] != INT_MAX) ? ", " + rt + to_string(registers[R2][RT]) : "")
                 << ((registers[R3][RT] != INT_MAX) ? " => " + rt + to_string(registers[R3][RT]) : "");// << endl;
@@ -360,71 +360,82 @@ int registerRenaming(InstructionBlock &block) {
 //***********************************************************************************************************
 //TODO: Scheduling
 
-struct PriorityQueue{
-    set<pair<int, int>> q;
-    
-    PriorityQueue(){}
+struct PriorityQueue {
+    set <pair<int, int>> q;
 
-    bool empty(){
+    PriorityQueue() {}
+
+    bool empty() {
         return q.empty();
     }
 
-    int size(){
+    int size() {
         return q.size();
     }
 
-    bool contains(int node_id){
-        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int,int>& p ){ return p.second == node_id; });
-        if( it != q.end())
+    bool contains(int node_id) {
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int, int> &p) { return p.second == node_id; });
+        if (it != q.end())
             return true;
         else
             return false;
     }
 
-    pair<int, int> get(set< pair<int, int> >::iterator it){
+    pair<int, int> get(set<pair < int, int>
+
+    >
+    ::iterator it
+    ){
         return *it;
     }
 
-    void decKey(pair<int, int> member, int newKey){
+    void decKey(pair<int, int> member, int newKey) {
 
         auto it = q.find(member);
 
-        if (it != q.end()){
+        if (it != q.end()) {
             q.erase(it);
             q.insert(make_pair(newKey, member.second));
-        }
-        else
+        } else
             insertKey(newKey, member.second);
 
     }
 
-    void insertKey(int key, int value){
+    void insertKey(int key, int value) {
         q.insert(make_pair(key, value));
     }
 
-    set< pair<int, int> >::iterator erase(set< pair<int, int> >::iterator it){
-        if(it == q.end())
+    set<pair<int, int>>::iterator erase(set<pair<int, int>>::iterator it){
+        if (it == q.end())
             return it;
         return q.erase(it);
     }
-    void erase(int node_id){
-        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int,int>& p ){ return p.second == node_id; });
-        if(it != q.end())
+
+    void erase(int node_id) {
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int, int> &p) { return p.second == node_id; });
+        if (it != q.end())
             q.erase(it);
     }
 
-    pair<int, int> getMin(){
+    pair<int, int> getMin() {
         auto it = q.begin();
         pair<int, int> min = *it;
         q.erase(it);
         return min;
     }
 
-    pair<int, int> getMax(){
+    pair<int, int> getMax() {
         auto rit = q.rbegin();
         pair<int, int> max = *rit;
         q.erase(next(rit).base());
         return max;
+    }
+
+    void show() {
+        for (auto &x: q) {
+            cout << "< " << x.first << ", " << x.second << " > ";
+        }
+        cout << endl;
     }
 
 };
@@ -519,7 +530,7 @@ struct Graph {
     vector <array<int, 3>> listIO; //line_num, Opcode, mem_loc
     vector<int> vrConst; //key - vr, val = memLoc
     vector<int> vrLatency; //key - vr, val = latency of instr that defines vr
-    
+
     Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), vrConst(regNum, INT_MAX), vrLatency(regNum) {}
 
     void insertEdge(Edge edge) {
@@ -547,7 +558,8 @@ struct Graph {
 
     void addEdgesIO(const InstructionIR &ins, list<int> usedReg) {
 
-        array<int, 3> lastInst;
+        array<int, 3> lastInst; // format <ins_id, op, memLoc>  //listIO is list of all Load Store Output instructions
+        bool firstOutput = true;
 
         addToListIO(ins, usedReg);
         lastInst = listIO.back();
@@ -561,11 +573,22 @@ struct Graph {
                     break;
                 }
             }
-        } else { //if( load || output)
+        } else if (lastInst[1] == load){
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
-                if ((*rit)[1] == store && (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2])) {
+                if ((*rit)[1] == store &&
+                    (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2])) {
                     insertEdge(Edge((*rit)[0], lastInst[0], 5, true));
                     break;
+                }
+            }
+        }else{  //output
+            for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
+                if(((*rit)[1] == store && (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2]))) {
+                    insertEdge(Edge((*rit)[0], lastInst[0], 5, true));
+                    break;
+                }else if (firstOutput && (*rit)[1] == output){
+                    insertEdge(Edge((*rit)[0], lastInst[0], 1, true));
+                    firstOutput = false;
                 }
             }
         }
@@ -642,7 +665,7 @@ struct Graph {
 
 
         for (const auto &x: useDef.first) {
-            insertEdge(Edge(regToNode[x], id, vrLatency[x] ));
+            insertEdge(Edge(regToNode[x], id, vrLatency[x]));
         }
 
         if (ins.opcode == load || ins.opcode == store || ins.opcode == output)
@@ -653,31 +676,31 @@ struct Graph {
 
     }
 
-    void relax(const Edge edge, PriorityQueue &q){
+    void relax(const Edge edge, PriorityQueue &q) {
         int oldDist = nodes[edge.from].priority;    // distTo[edge.from];
         int newDist = nodes[edge.to].priority + edge.weight; // distTo[edge.to]
 
-        if( oldDist < newDist ){
+        if (oldDist < newDist) {
             nodes[edge.from].priority = newDist;
             q.decKey(make_pair(oldDist, edge.from), newDist);
         }
     }
 
-    void computePriority(){
+    void computePriority() {
         PriorityQueue qmin;
         pair<int, int> nodeMin; // dist, line_num
 
-        for( auto rit = nodes.rbegin(); rit != nodes.rend(); rit++){
+        for (auto rit = nodes.rbegin(); rit != nodes.rend(); rit++) {
             //all nodes from back to start
-            if(rit->priority != 0)
+            if (rit->priority != 0)
                 continue;
 
             qmin.insertKey(0, rit->id);
 
-            while(!qmin.empty()){
+            while (!qmin.empty()) {
                 nodeMin = qmin.getMin();
 
-                for(const auto &edge: nodes[nodeMin.second].edgeIn ){
+                for (const auto &edge: nodes[nodeMin.second].edgeIn) {
                     relax(edge, qmin);
                 }
             }
@@ -686,110 +709,135 @@ struct Graph {
         return;
     }
 
-    pair<int, int> findReadyIns(set<pair<int,int>> &q){
+    pair<int, int> findReadyIns(set <pair<int, int>> &qReady) {
 
         int funcUnit[3] = {INT_MAX, INT_MAX, INT_MAX};
         int cnt = 0;
         int insId;
 
-        for(auto it=q.begin(); it != q.end() || cnt == 2;it++){
+        for (auto it = qReady.begin(); it != qReady.end() && cnt < 2; it++) {
             insId = it->second;
 
-            if( nodes[insId].ins->opcode == load || nodes[insId].ins->opcode == store ){
-                if(funcUnit[0] == INT_MAX){
+
+            if (nodes[insId].ins->opcode == load || nodes[insId].ins->opcode == store) {
+                if (funcUnit[0] == INT_MAX) {
                     funcUnit[0] = insId;
                     cnt++;
                 }
-            }else if(nodes[insId].ins->opcode == mult){
-                if(funcUnit[1] == INT_MAX){
+            } else if (nodes[insId].ins->opcode == mult) {
+                if (funcUnit[1] == INT_MAX) {
                     funcUnit[1] = insId;
                     cnt++;
                 }
-            }else{ // not load, store or mult
-                if(funcUnit[2] == INT_MAX){
+            } else { // not load, store or mult
+                if (funcUnit[2] == INT_MAX) {
                     funcUnit[2] = insId;
-                }else{
+                } else {  //funcUnit[2] is full
+                    if (nodes[insId].ins->opcode == output and nodes[funcUnit[2]].ins->opcode == output) {
+                        continue;
+                    }
                     return make_pair(funcUnit[2], insId);
                 }
                 cnt++;
             }
+
+//            cout<< cnt<< " FUNC UNIT = "<< funcUnit[0] <<", "<<funcUnit[1]<<", "<<funcUnit[2]<<endl;
         }
 
-        if(funcUnit[0] == INT_MAX){
+//        cout<<cnt<<" FUNC UNIT = "<< funcUnit[0] <<", "<<funcUnit[1]<<", "<<funcUnit[2]<<endl;
+
+        if (funcUnit[0] == INT_MAX) {
             return make_pair(funcUnit[2], funcUnit[1]);
-        }
-        else if(funcUnit[1] == INT_MAX){
+        } else if (funcUnit[1] == INT_MAX) {
             return make_pair(funcUnit[0], funcUnit[2]);
-        }
-        else{
+        } else {
             return make_pair(funcUnit[0], funcUnit[1]);
         }
 
     }
 
-    void updateQReady(PriorityQueue &qActive, PriorityQueue &qReady, int cycle, vector<int> depCnt){
+    void updateQReady(PriorityQueue &qActive, PriorityQueue &qReady, int cycle, vector<int> &depCnt) {
         list<int> finishedIns;
-        auto it=qActive.q.begin();
+        auto it = qActive.q.begin();
 
-        for(; it != qActive.q.end() && it->first <= cycle; it++){
+        for (; it != qActive.q.end() && it->first <= cycle + 1; it++) {
             finishedIns.push_back(it->second);
         }
 
         qActive.q.erase(qActive.q.begin(), it);
 
-        for(const auto &ins: finishedIns){
-            for(const auto &eOut: nodes[ins].edgeOut) {
-                if( --depCnt[eOut.to] == 0){
+        for (const auto &ins: finishedIns) {
+//            cout<<"NodeOut: ";
+            for (const auto &eOut: nodes[ins].edgeOut) {
+//                cout<< eOut.show()<<" | ";
+                if (--depCnt[eOut.to] == 0) {
                     qReady.insertKey(-nodes[eOut.to].priority, eOut.to);
                 }
             }
+//            cout<<endl;
         }
+
 
     }
 
-    list< pair<InstructionIR, InstructionIR> > schedule(){
+    // SCHEDULE************************************************
+    list <pair<InstructionIR, InstructionIR>> schedule() {
 
-        list<pair<InstructionIR, InstructionIR>> listTwoIns;
-        pair<InstructionIR, InstructionIR> currentIns;
+        list <pair<InstructionIR, InstructionIR>> listTwoIns;
+        pair <InstructionIR, InstructionIR> currentIns;
         pair<int, int> twoInsIds;
         vector<int> dependencyCounter(nodes.size());
 
         int cycle = 0;
-        PriorityQueue qReady;    //priority, ins_id
-        PriorityQueue qActive;     //finish_time, ins_id
+        PriorityQueue qReady;       // < priority, ins_id >
+        PriorityQueue qActive;      // < finish_time, ins_id >
 
 
-        for( const auto &node: nodes){
+        for (const auto &node: nodes) {
             dependencyCounter[node.id] = node.edgeIn.size();
-            if( node.edgeIn.empty()){
+            if (node.edgeIn.empty()) {
                 qReady.insertKey(-node.priority, node.id);
             }
         }
 
-        while( !qReady.empty() || !qActive.empty() ){
+        while (!qReady.empty() || !qActive.empty()) {
+
+//            cout<< cycle <<"-------------------------------------"<<endl;
+//            cout<<"qReady: ";
+//            qReady.show();
+//            cout<<"qActive: ";
+//            qActive.show();
 
             twoInsIds = findReadyIns(qReady.q);
 
+//            cout<<"TwoInsIds = "<< twoInsIds.first <<" , "<<twoInsIds.second<<endl;
+
             currentIns = make_pair(InstructionIR(cycle, nop), InstructionIR(cycle, nop));
 
-            if(twoInsIds.first != INT_MAX){
+            if (twoInsIds.first != INT_MAX) {
                 qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
                 qReady.erase(twoInsIds.first);
                 currentIns.first = *nodes[twoInsIds.first].ins;
             }
 
-            if(twoInsIds.second != INT_MAX){
+            if (twoInsIds.second != INT_MAX) {
                 qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
                 qReady.erase(twoInsIds.second);
                 currentIns.second = *nodes[twoInsIds.second].ins;
             }
 
+
+//            cout<< cycle <<"-------------------------------------"<<endl;
+//            cout<<"qReady: ";
+//            qReady.show();
+//            cout<<"qActive: ";
+//            qActive.show();
+
             updateQReady(qActive, qReady, cycle, dependencyCounter);
 
-            listTwoIns.push_back( currentIns );
+            listTwoIns.push_back(currentIns);
             cycle++;
         }
-
 
 
         return listTwoIns;
@@ -818,10 +866,10 @@ struct Graph {
         node_stream << edge_stream.str();
         node_stream << "}" << endl;
 
-        cout << node_stream.str();
+        //cout << node_stream.str();
 
 
-        cout << "fileName = " << fileName << endl;
+//        cout << "fileName = " << fileName << endl;
 
         if (fileName != "") {
             ofstream graphFile(fileName, ios::out);
@@ -831,7 +879,8 @@ struct Graph {
 //                graphFile.flush();
                 graphFile.close();
             } else {
-                cerr << "Not Created Graphviz file : " << fileName << endl;
+                nop;
+                //cerr << "Not Created Graphviz file : " << fileName << endl;
             }
 
         }
@@ -850,23 +899,21 @@ Graph createDependenceGraph(InstructionBlock &block, int regNum) {
 //        dg.show();
 
     }
-//    int *p;
-//    p[545454444] = 5;
     return dg;
 }
 
 void schedule(InstructionBlock &block, int regNum, string gFileName) {
 
     Graph dg(createDependenceGraph(block, regNum));
-    list<pair<InstructionIR, InstructionIR>> newSchedule;
+    list <pair<InstructionIR, InstructionIR>> newSchedule;
 
     dg.computePriority();
-
-    dg.show("./graphviz/g_" + gFileName.substr(7, 9) + ".txt");
+    dg.show("./graphviz/g_" +
+            gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
 
     newSchedule = dg.schedule();
-    for(const auto &ins: newSchedule){
-        cout<< "[ "<<ins.first.showReg(VR) <<"\t\t, "<<ins.second.showReg(VR)<<" ]"<<endl;
+    for (const auto &ins: newSchedule) {
+        cout << "[" << ins.first.showReg(VR) << "; " << ins.second.showReg(VR) << "]" << endl;
     }
 }
 
