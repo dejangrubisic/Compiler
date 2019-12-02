@@ -381,11 +381,7 @@ struct PriorityQueue {
             return false;
     }
 
-    pair<int, int> get(set<pair < int, int>
-
-    >
-    ::iterator it
-    ){
+    pair<int, int> get( set<pair < int, int>>::iterator it){
         return *it;
     }
 
@@ -530,6 +526,7 @@ struct Graph {
     vector <array<int, 3>> listIO; //line_num, Opcode, mem_loc
     vector<int> vrConst; //key - vr, val = memLoc
     vector<int> vrLatency; //key - vr, val = latency of instr that defines vr
+    unordered_map<int, int> memoryMap;
 
     Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), vrConst(regNum, INT_MAX), vrLatency(regNum) {}
 
@@ -538,14 +535,25 @@ struct Graph {
         nodes[edge.to].insertEdgeIn(edge);
     }
 
-    void addToListIO(const InstructionIR &ins, list<int> usedReg) {
+    void addToListIO(const InstructionIR &ins, const pair<list<int>, int> &useDef) {
         int tmp;
         switch (ins.opcode) {
             case load:
-                tmp = vrConst[usedReg.front()];
+                tmp = vrConst[useDef.first.front()];
+                //Propagate constant from memory, if there is not in memory invalidate vrConst
+                if(memoryMap.count(tmp) != 0){
+                    vrConst[useDef.second] = memoryMap[tmp];
+                }else{
+                    vrConst[useDef.second] = INT_MAX;
+                }
+
                 break;
             case store:
-                tmp = vrConst[usedReg.back()];
+                tmp = vrConst[useDef.first.back()];
+                //Store constants in MemoryList if you know address
+                if( tmp != INT_MAX){
+                    memoryMap[tmp] = vrConst[useDef.first.front()];
+                }
                 break;
             case output:
                 tmp = ins.constant;
@@ -556,12 +564,13 @@ struct Graph {
 
     }
 
-    void addEdgesIO(const InstructionIR &ins, list<int> usedReg) {
+    void addEdgesIO(const InstructionIR &ins, const pair<list<int>, int> &useDef) {
 
         array<int, 3> lastInst; // format <ins_id, op, memLoc>  //listIO is list of all Load Store Output instructions
-        bool firstOutput = true;
+        bool lastOutput = true;
+        bool lastStore = true;
 
-        addToListIO(ins, usedReg);
+        addToListIO(ins, useDef);
         lastInst = listIO.back();
         nodes[lastInst[0]].memLoc = lastInst[2];    // write location into node in graph
 
@@ -569,7 +578,7 @@ struct Graph {
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
                 if (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2]) {
                     //TODO: this weights try to change on - output,store = -4
-                    insertEdge(Edge((*rit)[0], lastInst[0], 1, true));
+                    insertEdge(Edge((*rit)[0], lastInst[0], 1, true));  //should be 1 instead of 5
                     break;
                 }
             }
@@ -583,12 +592,14 @@ struct Graph {
             }
         }else{  //output
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
-                if(((*rit)[1] == store && (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2]))) {
+                if(lastStore && (*rit)[1] == store && (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2])) {
                     insertEdge(Edge((*rit)[0], lastInst[0], 5, true));
-                    break;
-                }else if (firstOutput && (*rit)[1] == output){
+                    lastStore = false;
+                }else if (lastOutput && (*rit)[1] == output){
                     insertEdge(Edge((*rit)[0], lastInst[0], 1, true));
-                    firstOutput = false;
+                    lastOutput = false;
+                }else if(lastOutput == false && lastStore == false){
+                    break;
                 }
             }
         }
@@ -624,6 +635,7 @@ struct Graph {
                     break;
                 default:;
             }
+            nodes[ins.line_num].memLoc = vrConst[useDef.second];
 
         } else if (useDef.first.size() == 2 &&
                    vrConst[useDef.first.front()] != INT_MAX && vrConst[useDef.first.back()] != INT_MAX) {
@@ -646,8 +658,8 @@ struct Graph {
                     break;
                 default:;
             }
+            nodes[ins.line_num].memLoc = vrConst[useDef.second];
         }
-        nodes[ins.line_num].memLoc = vrConst[useDef.second];
         return;
     }
 
@@ -669,7 +681,7 @@ struct Graph {
         }
 
         if (ins.opcode == load || ins.opcode == store || ins.opcode == output)
-            addEdgesIO(ins, useDef.first);
+            addEdgesIO(ins, useDef);
         else
             constantPropagation(ins, useDef);
 
@@ -856,7 +868,7 @@ struct Graph {
             vrDef = opUseDef(*x.ins, VR).second;
 
             node_stream << x.id << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
-                        << "\n Mem = " << (x.memLoc != INT_MAX ? x.memLoc : -1)
+                        << "\n Mem = " << (x.memLoc != INT_MAX ? to_string(x.memLoc) : "None")
                         << " | Pri = " << (x.priority)
                         << "\" ];" << endl;
 
@@ -908,10 +920,13 @@ void schedule(InstructionBlock &block, int regNum, string gFileName) {
     list <pair<InstructionIR, InstructionIR>> newSchedule;
 
     dg.computePriority();
+
+
     dg.show("./graphviz/g_" +
             gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
 
     newSchedule = dg.schedule();
+
     for (const auto &ins: newSchedule) {
         cout << "[" << ins.first.showReg(VR) << "; " << ins.second.showReg(VR) << "]" << endl;
     }
