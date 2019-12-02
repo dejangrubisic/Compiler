@@ -360,10 +360,10 @@ int registerRenaming(InstructionBlock &block) {
 //***********************************************************************************************************
 //TODO: Scheduling
 
-struct PriorityQueue {
+struct PrioritySet {
     set <pair<int, int>> q;
 
-    PriorityQueue() {}
+    PrioritySet() {}
 
     bool empty() {
         return q.empty();
@@ -392,9 +392,114 @@ struct PriorityQueue {
         if (it != q.end()) {
             q.erase(it);
             q.insert(make_pair(newKey, member.second));
-        } else
+        } else {
             insertKey(newKey, member.second);
+        }
+    }
 
+    void incKey(int key, int value) {
+
+        auto it = find_if(q.begin(), q.end(), [value](const pair<int, int> &p) { return p.second == value; });
+
+        // There is already key with same id
+        if (it != q.end()) {
+            if(it->first < key){
+                q.erase(it);
+                insertKey(key, value);
+            }
+        } else {
+            insertKey(key, value);
+        }
+    }
+
+    void insertKey(int key, int value) {
+        q.insert(make_pair(key, value));
+    }
+
+    set<pair<int, int>>::iterator erase(set<pair<int, int>>::iterator it){
+        if (it == q.end())
+            return it;
+        return q.erase(it);
+    }
+
+    void erase(int node_id) {
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int, int> &p) { return p.second == node_id; });
+        if (it != q.end())
+            q.erase(it);
+    }
+
+    pair<int, int> getMin() {
+        auto it = q.begin();
+        pair<int, int> min = *it;
+        q.erase(it);
+        return min;
+    }
+
+    pair<int, int> getMax() {
+        auto rit = q.rbegin();
+        pair<int, int> max = *rit;
+        q.erase(next(rit).base());
+        return max;
+    }
+
+    void show() {
+        for (auto &x: q) {
+            cout << "< " << x.first << ", " << x.second << " > ";
+        }
+        cout << endl;
+    }
+
+};
+struct PriorityMultiSet {
+    multiset <pair<int, int>> q;
+
+    PriorityMultiSet() {}
+
+    bool empty() {
+        return q.empty();
+    }
+
+    int size() {
+        return q.size();
+    }
+
+    bool contains(int node_id) {
+        auto it = find_if(q.begin(), q.end(), [node_id](const pair<int, int> &p) { return p.second == node_id; });
+        if (it != q.end())
+            return true;
+        else
+            return false;
+    }
+
+    pair<int, int> get( set<pair < int, int>>::iterator it){
+        return *it;
+    }
+
+    void decKey(pair<int, int> member, int newKey) {
+
+        auto it = q.find(member);
+
+        if (it != q.end()) {
+            q.erase(it);
+            q.insert(make_pair(newKey, member.second));
+        } else {
+            insertKey(newKey, member.second);
+        }
+    }
+
+    void incKey(int key, int value) {
+
+        auto it = find_if(q.begin(), q.end(), [value](const pair<int, int> &p) { return p.second == value; });
+
+        // There is already key with same id
+        if (it != q.end()) {
+            if(it->first < key){
+                q.erase(it);
+                insertKey(key, value);
+            }
+        } else {
+            insertKey(key, value);
+        }
     }
 
     void insertKey(int key, int value) {
@@ -577,7 +682,6 @@ struct Graph {
         if (lastInst[1] == store) {
             for (auto rit = listIO.rbegin() + 1; rit != listIO.rend(); ++rit) {
                 if (lastInst[2] == INT_MAX || (*rit)[2] == INT_MAX || lastInst[2] == (*rit)[2]) {
-                    //TODO: this weights try to change on - output,store = -4
                     insertEdge(Edge((*rit)[0], lastInst[0], 1, true));  //should be 1 instead of 5
                     break;
                 }
@@ -688,7 +792,7 @@ struct Graph {
 
     }
 
-    void relax(const Edge edge, PriorityQueue &q) {
+    void relax(const Edge edge, PrioritySet &q) {
         int oldDist = nodes[edge.from].priority;    // distTo[edge.from];
         int newDist = nodes[edge.to].priority + edge.weight; // distTo[edge.to]
 
@@ -699,7 +803,7 @@ struct Graph {
     }
 
     void computePriority() {
-        PriorityQueue qmin;
+        PrioritySet qmin;
         pair<int, int> nodeMin; // dist, line_num
 
         for (auto rit = nodes.rbegin(); rit != nodes.rend(); rit++) {
@@ -723,69 +827,88 @@ struct Graph {
 
     pair<int, int> findReadyIns(set <pair<int, int>> &qReady) {
 
-        int funcUnit[3] = {INT_MAX, INT_MAX, INT_MAX};
-        int cnt = 0;
-        int insId;
+        int funcUnit[2] = {INT_MAX, INT_MAX};
+        int outputIns = INT_MAX;
+        int insId, opcode;
 
-        for (auto it = qReady.begin(); it != qReady.end() && cnt < 2; it++) {
+        for (auto it = qReady.begin(); it != qReady.end() && (funcUnit[0] == INT_MAX || funcUnit[1] == INT_MAX); it++) {
             insId = it->second;
+            opcode = nodes[insId].ins->opcode;
 
-
-            if (nodes[insId].ins->opcode == load || nodes[insId].ins->opcode == store) {
-                if (funcUnit[0] == INT_MAX) {
+            if(funcUnit[0] == INT_MAX){
+                if(opcode == load || opcode == store){
                     funcUnit[0] = insId;
-                    cnt++;
                 }
-            } else if (nodes[insId].ins->opcode == mult) {
-                if (funcUnit[1] == INT_MAX) {
-                    funcUnit[1] = insId;
-                    cnt++;
-                }
-            } else { // not load, store or mult
-                if (funcUnit[2] == INT_MAX) {
-                    funcUnit[2] = insId;
-                } else {  //funcUnit[2] is full
-                    if (nodes[insId].ins->opcode == output and nodes[funcUnit[2]].ins->opcode == output) {
-                        continue;
-                    }
-                    return make_pair(funcUnit[2], insId);
-                }
-                cnt++;
+            }else if(opcode == load && nodes[funcUnit[0]].ins->opcode == store){
+                // Give Priority to Load over Store,
+                funcUnit[0] = insId;
             }
 
-//            cout<< cnt<< " FUNC UNIT = "<< funcUnit[0] <<", "<<funcUnit[1]<<", "<<funcUnit[2]<<endl;
+            if(funcUnit[1] == INT_MAX && opcode == mult){
+                funcUnit[1] = insId;
+            }
         }
 
-//        cout<<cnt<<" FUNC UNIT = "<< funcUnit[0] <<", "<<funcUnit[1]<<", "<<funcUnit[2]<<endl;
-
-        if (funcUnit[0] == INT_MAX) {
-            return make_pair(funcUnit[2], funcUnit[1]);
-        } else if (funcUnit[1] == INT_MAX) {
-            return make_pair(funcUnit[0], funcUnit[2]);
-        } else {
-            return make_pair(funcUnit[0], funcUnit[1]);
+        if(funcUnit[0] == INT_MAX){
+            for (auto it = qReady.begin(); it != qReady.end(); it++) {
+                insId = it->second;
+                opcode = nodes[insId].ins->opcode;
+                if(opcode != load && opcode != store && opcode != mult){
+                    if(opcode != output){
+                        funcUnit[0] = insId;
+                    }else{
+                        outputIns = insId;
+                    }
+                    break;
+                }
+            }
+            // Make output the least inportant (doesn't open opportunities
+            if(funcUnit[0] == INT_MAX){
+                funcUnit[0] = outputIns;
+            }
         }
 
+        outputIns = INT_MAX;
+        if(funcUnit[1] == INT_MAX){
+            for (auto it = qReady.begin(); it != qReady.end(); it++) {
+                insId = it->second;
+                opcode = nodes[insId].ins->opcode;
+
+                if(insId == funcUnit[0] || opcode == load || opcode == store || opcode == mult){
+                    continue;
+                }else if(opcode == output) {
+                    outputIns = insId;
+                }else{
+                    funcUnit[1] = insId;
+                    break;
+                }
+            }
+            // Make output the least inportant (doesn't open opportunities
+            if(funcUnit[1] == INT_MAX){
+                funcUnit[1] = outputIns;
+            }
+        }
+        return make_pair(funcUnit[0], funcUnit[1]);
     }
 
-    void updateQReady(PriorityQueue &qActive, PriorityQueue &qReady, int cycle, vector<int> &depCnt) {
+    void updateQReady(PriorityMultiSet &qActive, PrioritySet &qReady, int cycle, vector<int> &depCnt) {
         list<int> finishedIns;
         auto it = qActive.q.begin();
 
         for (; it != qActive.q.end() && it->first <= cycle + 1; it++) {
-            finishedIns.push_back(it->second);
+            if(it->first == cycle+1)
+                finishedIns.push_back(it->second);
         }
 
         qActive.q.erase(qActive.q.begin(), it);
 
         for (const auto &ins: finishedIns) {
 //            cout<<"NodeOut: ";
-            for (const auto &eOut: nodes[ins].edgeOut) {
-//                cout<< eOut.show()<<" | ";
-                if (--depCnt[eOut.to] == 0) {
-                    qReady.insertKey(-nodes[eOut.to].priority, eOut.to);
-                }
+//            cout<< eOut.show()<<" | ";
+            if (--depCnt[ins] == 0) {
+                qReady.insertKey(-nodes[ins].priority, ins);
             }
+
 //            cout<<endl;
         }
 
@@ -801,8 +924,8 @@ struct Graph {
         vector<int> dependencyCounter(nodes.size());
 
         int cycle = 0;
-        PriorityQueue qReady;       // < priority, ins_id >
-        PriorityQueue qActive;      // < finish_time, ins_id >
+        PrioritySet qReady;       // < priority, ins_id >
+        PriorityMultiSet qActive;      // < finish_time, ins_id >
 
 
         for (const auto &node: nodes) {
@@ -814,7 +937,7 @@ struct Graph {
 
         while (!qReady.empty() || !qActive.empty()) {
 
-//            cout<< cycle <<"-------------------------------------"<<endl;
+//            cout<<endl<< cycle <<"-------------------------------------"<<endl;
 //            cout<<"qReady: ";
 //            qReady.show();
 //            cout<<"qActive: ";
@@ -827,13 +950,19 @@ struct Graph {
             currentIns = make_pair(InstructionIR(cycle, nop), InstructionIR(cycle, nop));
 
             if (twoInsIds.first != INT_MAX) {
-                qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
+                for(const auto &edge: nodes[twoInsIds.first].edgeOut){
+                    qActive.insertKey(cycle + edge.weight, edge.to);
+                }
+//                qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
                 qReady.erase(twoInsIds.first);
                 currentIns.first = *nodes[twoInsIds.first].ins;
             }
 
             if (twoInsIds.second != INT_MAX) {
-                qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
+                for(const auto &edge: nodes[twoInsIds.second].edgeOut){
+                    qActive.insertKey(cycle + edge.weight, edge.to);
+                }
+//                qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
                 qReady.erase(twoInsIds.second);
                 currentIns.second = *nodes[twoInsIds.second].ins;
             }
