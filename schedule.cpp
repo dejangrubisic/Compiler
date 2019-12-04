@@ -579,6 +579,13 @@ struct Edge {
         ss << from << " -> " << to << " [ label = \"" << weight << (typeIO ? " (IO)" : "") << "\" ];";
         return ss.str();
     }
+    bool operator ==(const Edge &edgeOther){
+        if(from == edgeOther.from && to == edgeOther.to &&
+            weight == edgeOther.weight && typeIO == edgeOther.typeIO){
+            return true;
+        }
+        return false;
+    }
 };
 
 struct Node {
@@ -680,6 +687,7 @@ struct Graph {
 
     }
 
+
     void addEdgesIO(const InstructionIR &ins, const pair<list<int>, int> &useDef) {
 
         array<int, 3> lastInst; // format <ins_id, op, memLoc>  //listIO is list of all Load Store Output instructions
@@ -752,7 +760,8 @@ struct Graph {
                     break;
                 default:;
             }
-            nodes[ins.line_num].memLoc = vrConst[useDef.second];
+            if(fakePropagation == false)
+                nodes[ins.line_num].memLoc = vrConst[useDef.second];
             return true;
 
         } else if (useDef.first.size() == 2 &&
@@ -776,7 +785,8 @@ struct Graph {
                     break;
                 default:;
             }
-            nodes[ins.line_num].memLoc = vrConst[useDef.second];
+            if(fakePropagation == false)
+                nodes[ins.line_num].memLoc = vrConst[useDef.second];
             return true;
 
         } else if(fakePropagation == false){
@@ -1004,38 +1014,86 @@ struct Graph {
     }
 
 
-    void fakePropagation( int insId, unordered_map<int, int> &unknownMap){
+    void fakePropagation( int insId, unordered_map<int, int> &fakeAddrMap){
         pair<list<int>, int> useDef = opUseDef(*nodes[insId].ins, VR);
         bool succPropagation;
 
-        cout<<"Const Prop: "<< insId<<endl;
+//        cout<<"Const Prop: "<< insId<<endl;
 
-        if( nodes[insId].ins->opcode == load ||
-            nodes[insId].ins->opcode == store ){
-            unknownMap[insId] = vrConst[useDef.first.front()];
+        if( nodes[insId].ins->opcode == load && nodes[insId].memLoc == INT_MAX){
+            fakeAddrMap[insId] = vrConst[useDef.first.front()];
+//            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.front()<<endl;
+            return;
+        }else if( nodes[insId].ins->opcode == store && nodes[insId].memLoc == INT_MAX){
+//            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.back()<<endl;
+            fakeAddrMap[insId] = vrConst[useDef.first.back()];
             return;
         }
 
         succPropagation = constantPropagation(*nodes[insId].ins, useDef, true);
 
-        cout<<"1 VR const : "<<insId<<" | " << nodes[insId].ins->showReg(VR)<<" Succ = "<< succPropagation <<endl;
+//        cout<<"1 VR const : "<<insId<<" | " << nodes[insId].ins->showReg(VR)<<" Succ = "<< succPropagation <<endl;
 //        for(auto &x: vrConst){
 //            cout<< x<<endl;
 //        }
 
 
         for(const auto &edge: nodes[insId].edgeOut){
-            //if( succPropagation == true ){
-                fakePropagation( edge.to, unknownMap);
+            //if( succPropagation == true ){    //todo: Include this when all work
+                fakePropagation( edge.to, fakeAddrMap);
             //}
         }
         return;
     }
 
+    void deleteEdge(Edge edge){
+
+        for(auto rit = nodes[edge.from].edgeOut.rbegin(); rit != nodes[edge.from].edgeOut.rend(); rit++){
+//            cout<<"Out: "<<(*rit).show()<<endl;
+            if((*rit) == edge){
+                nodes[edge.from].edgeOut.erase(--(rit.base()));
+                break;
+            }
+        }
+
+        for(auto rit = nodes[edge.to].edgeIn.rbegin(); rit != nodes[edge.to].edgeIn.rend(); rit++){
+//            cout<<"In: "<<(*rit).show()<<endl;
+            if((*rit) == edge){
+                nodes[edge.to].edgeIn.erase(--(rit.base()));
+                break;
+            }
+        }
+    }
+
+    void createFakeEdge(pair<int, int> fakeAddr, Edge edge, unordered_map<int, int> &fakeAddrMap){
+        auto rit = find_if(listIO.rbegin(), listIO.rend(), [x=edge.from](array<int, 3> io) { return io[0] == x; });
+
+        for(; rit != listIO.rend(); rit++ ){
+//            cout << (*rit)[0]<<endl;
+            if( fakeAddrMap.count((*rit)[0]) && fakeAddr.second != fakeAddrMap[(*rit)[0]] ){
+                continue;
+            }else{
+                // insert new edge
+//                cout<<"Insert New Edge: "<< Edge((*rit)[0], fakeAddr.first, 5, true).show()<<endl;
+
+                if( (*rit)[1] == store){
+                    insertEdge(Edge((*rit)[0], fakeAddr.first, 5, true));
+                    break;
+                }else if(nodes[fakeAddr.first].ins->opcode == store ){
+                    insertEdge(Edge((*rit)[0], fakeAddr.first, 1, true));
+                    break;
+                }
+
+            }
+
+        }
+
+    }
+
 
     void cleanPropagation(){
         for(const auto &x: vrUnknown){
-            cout<<"CP = "<< x<<endl;
+//            cout<<"CP = "<< x<<endl;
             vrConst[x] = INT_MAX;
         }
     }
@@ -1047,62 +1105,51 @@ struct Graph {
 
 
 
-        cout<< "listIO"<<endl;
-        for(const auto &x: listIO){
-            cout<<x[0]<<", "<<x[1]<<", "<<x[2]<<" "<<endl;
-        }
+//        cout<< "listIO"<<endl;
+//        for(const auto &x: listIO){
+//            cout<<x[0]<<", "<<x[1]<<", "<<x[2]<<" "<<endl;
+//        }
 
-//        cout<<" VR const"<<endl;
-//        for(auto &x: vrConst){
+
+//        cout<<" unknownLoadList "<<endl;
+//        for(auto &x: unknownLoadList){
 //            cout<< x<<endl;
 //        }
 
-        cout<<" vrUnknown const"<<endl;
-        for(auto &x: vrUnknown){
-            cout<< x<<endl;
-        }
 
+//        cout<<"0 VR const : "<<endl;
+//        for(auto &x: vrConst){
+//            cout<< x<<endl;
+//        }
+//        cout<<" Un Initialized Load"<<endl;
 
-        cout<<"0 VR const : "<<endl;
-        for(auto &x: vrConst){
-            cout<< x<<endl;
-        }
-        cout<<" Un Initialized Load"<<endl;
         for(auto &loadId: unknownLoadList){
-            unordered_map<int, int> unknownMap; // key - insId, value - fakeMem
+            unordered_map<int, int> fakeAddrMap; // key - insId, value - fakeMem
 
             // Initalize load with fake address
             vrConst[ nodes[loadId].ins->registers[R3][VR] ] = 1111111;
 
 
-            cout<<"FAKE PROPAGATION***********************************"<<endl;
+//            cout<<"FAKE PROPAGATION***********************************"<<endl;
             for(const auto &edge: nodes[loadId].edgeOut){
-                fakePropagation( edge.to, unknownMap);
+                fakePropagation( edge.to, fakeAddrMap);
             }
             
-            for(const auto &x: unknownMap){
+            for(const auto &fakeAddr: fakeAddrMap){
 
-                edge = nodes[x.first].edgeIn.back();
+                edge = nodes[fakeAddr.first].edgeIn.back();
                 if(edge.typeIO == true){
-                    cout<<x.first<<" _ "<<x.second<<" => "<<nodes[x.first].edgeIn.back().show()<<endl;
+//                    cout<<"----"<<endl;
+//                    cout<<fakeAddr.first<<" _ "<<fakeAddr.second<<endl;
 
-                    if(x.second != unknownMap[edge.from]){ //delete IO
-                        auto rit = find_if(listIO.rbegin(), listIO.rend(), [x=edge.from](array<int, 3> io) { return io[0] == x; });
-                        nodes[edge.to].edgeIn.pop_back();
-                        nodes[edge.from].edgeIn.pop_back();
+//                    cout<<"\t"<< fakeAddr.second <<" | map = "<< fakeAddrMap[edge.from]<<endl;
 
+                    if(fakeAddrMap.count(edge.from) && fakeAddr.second != fakeAddrMap[edge.from]){ //delete IO
+//                        cout<<" Delete : "<<edge.show()<<endl;
 
-                        for(; rit != listIO.rend(); rit++ ){
-                            cout << (*rit)[0]<<endl;
-                            if( x.second != unknownMap[(*rit)[0]] ){
-                                continue;
-                            }else{
-                                // insert new edge
-                                insertEdge(Edge((*rit)[0], x.first, 5, true));
-                                break;
-                            }
+                        deleteEdge(edge);
+                        createFakeEdge(fakeAddr, edge, fakeAddrMap);
 
-                        }
 
 
                     }
@@ -1111,7 +1158,7 @@ struct Graph {
                 }
 
 
-//                if(nodes[x.first].edge)
+//                if(nodes[fakeAddr.first].edge)
             }
 //            cout<<"1 VR const : "<<loadId<<" | " << nodes[loadId].ins->showReg(VR) <<endl;
 //            for(auto &x: vrConst){
@@ -1119,11 +1166,11 @@ struct Graph {
 //            }
 
             cleanPropagation();
-
-//            cout<<"2 VR const"<<endl;
-//            for(auto &x: vrConst){
-//                cout<< x<<endl;
+//            cout<<"************fakeAddrMap"<<endl;
+//            for(const auto &x: fakeAddrMap){
+//                cout<<x.first<<" | "<<x.second<<endl;
 //            }
+
 
 
 
@@ -1214,12 +1261,13 @@ void schedule(InstructionBlock &block, int regNum, string gFileName) {
 
     dg.computePriority();
 
+    dg.proveDifAddress();
+
 
     dg.show("./graphviz/g_" +
             gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
 
     newSchedule = dg.schedule();
-    dg.proveDifAddress();
 
     for (const auto &ins: newSchedule) {
         cout << "[" << ins.first.showReg(VR) << "; " << ins.second.showReg(VR) << "]" << endl;
