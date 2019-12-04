@@ -593,7 +593,7 @@ struct Node {
     list <Edge> edgeIn;
 
     int id;
-    const InstructionIR *ins;
+    InstructionIR ins;
     int priority;   // - priority of scheduling
     int memLoc;
     int latency;
@@ -601,7 +601,7 @@ struct Node {
 
     Node() {
         priority = 0;
-        ins = 0;
+        ins = InstructionIR();
         memLoc = INT_MAX;
         fakeLoc= INT_MAX;
     }
@@ -805,7 +805,7 @@ struct Graph {
             vrLatency[useDef.second] = latencyTable[ins.opcode];
         }
         nodes[id].id = id;
-        nodes[id].ins = &ins;
+        nodes[id].ins = ins;
         nodes[id].latency = latencyTable[ins.opcode];
 
 
@@ -862,13 +862,13 @@ struct Graph {
 
         for (auto it = qReady.begin(); it != qReady.end() && (funcUnit[0] == INT_MAX || funcUnit[1] == INT_MAX); it++) {
             insId = it->second;
-            opcode = nodes[insId].ins->opcode;
+            opcode = nodes[insId].ins.opcode;
 
             if(funcUnit[0] == INT_MAX){
                 if(opcode == load || opcode == store){
                     funcUnit[0] = insId;
                 }
-            }else if(opcode == load && nodes[funcUnit[0]].ins->opcode == store){
+            }else if(opcode == load && nodes[funcUnit[0]].ins.opcode == store){
                 // Give Priority to Load over Store,
                 funcUnit[0] = insId;
             }
@@ -881,7 +881,7 @@ struct Graph {
         if(funcUnit[0] == INT_MAX){
             for (auto it = qReady.begin(); it != qReady.end(); it++) {
                 insId = it->second;
-                opcode = nodes[insId].ins->opcode;
+                opcode = nodes[insId].ins.opcode;
                 if(opcode != load && opcode != store && opcode != mult){
                     if(opcode != output){
                         funcUnit[0] = insId;
@@ -901,7 +901,7 @@ struct Graph {
         if(funcUnit[1] == INT_MAX){
             for (auto it = qReady.begin(); it != qReady.end(); it++) {
                 insId = it->second;
-                opcode = nodes[insId].ins->opcode;
+                opcode = nodes[insId].ins.opcode;
 
                 if(insId == funcUnit[0] || opcode == load || opcode == store || opcode == mult){
                     continue;
@@ -984,7 +984,7 @@ struct Graph {
                 }
 //                qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
                 qReady.erase(twoInsIds.first);
-                currentIns.first = *nodes[twoInsIds.first].ins;
+                currentIns.first = nodes[twoInsIds.first].ins;
             }
 
             if (twoInsIds.second != INT_MAX) {
@@ -993,7 +993,7 @@ struct Graph {
                 }
 //                qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
                 qReady.erase(twoInsIds.second);
-                currentIns.second = *nodes[twoInsIds.second].ins;
+                currentIns.second = nodes[twoInsIds.second].ins;
             }
 
 
@@ -1015,22 +1015,22 @@ struct Graph {
 
 
     void fakePropagation( int insId, unordered_map<int, int> &fakeAddrMap){
-        pair<list<int>, int> useDef = opUseDef(*nodes[insId].ins, VR);
+        pair<list<int>, int> useDef = opUseDef(nodes[insId].ins, VR);
         bool succPropagation;
 
 //        cout<<"Const Prop: "<< insId<<endl;
 
-        if( nodes[insId].ins->opcode == load && nodes[insId].memLoc == INT_MAX){
+        if( nodes[insId].ins.opcode == load && nodes[insId].memLoc == INT_MAX){
             fakeAddrMap[insId] = vrConst[useDef.first.front()];
 //            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.front()<<endl;
             return;
-        }else if( nodes[insId].ins->opcode == store && nodes[insId].memLoc == INT_MAX){
+        }else if( nodes[insId].ins.opcode == store && nodes[insId].memLoc == INT_MAX){
 //            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.back()<<endl;
             fakeAddrMap[insId] = vrConst[useDef.first.back()];
             return;
         }
 
-        succPropagation = constantPropagation(*nodes[insId].ins, useDef, true);
+        succPropagation = constantPropagation(nodes[insId].ins, useDef, true);
 
 //        cout<<"1 VR const : "<<insId<<" | " << nodes[insId].ins->showReg(VR)<<" Succ = "<< succPropagation <<endl;
 //        for(auto &x: vrConst){
@@ -1039,9 +1039,9 @@ struct Graph {
 
 
         for(const auto &edge: nodes[insId].edgeOut){
-            //if( succPropagation == true ){    //todo: Include this when all work
+            if( succPropagation == true ){    //todo: Include this when all work
                 fakePropagation( edge.to, fakeAddrMap);
-            //}
+            }
         }
         return;
     }
@@ -1079,7 +1079,7 @@ struct Graph {
                 if( (*rit)[1] == store){
                     insertEdge(Edge((*rit)[0], fakeAddr.first, 5, true));
                     break;
-                }else if(nodes[fakeAddr.first].ins->opcode == store ){
+                }else if(nodes[fakeAddr.first].ins.opcode == store ){
                     insertEdge(Edge((*rit)[0], fakeAddr.first, 1, true));
                     break;
                 }
@@ -1127,7 +1127,7 @@ struct Graph {
             unordered_map<int, int> fakeAddrMap; // key - insId, value - fakeMem
 
             // Initalize load with fake address
-            vrConst[ nodes[loadId].ins->registers[R3][VR] ] = 1111111;
+            vrConst[ nodes[loadId].ins.registers[R3][VR] ] = 1111111;
 
 
 //            cout<<"FAKE PROPAGATION***********************************"<<endl;
@@ -1171,27 +1171,7 @@ struct Graph {
 //                cout<<x.first<<" | "<<x.second<<endl;
 //            }
 
-
-
-
-
-
         }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     }
 
@@ -1202,12 +1182,12 @@ struct Graph {
         int vrDef;
         node_stream << "digraph G {" << endl;
         for (const auto &x: nodes) {
-            if (x.ins == 0) {
+            if (x.ins.opcode == err) {
                 continue;
             }
-            vrDef = opUseDef(*x.ins, VR).second;
+            vrDef = opUseDef(x.ins, VR).second;
 
-            node_stream << x.id << " [ label = \"" << x.ins->line_num << ". " << x.ins->showReg(VR)
+            node_stream << x.id << " [ label = \"" << x.ins.line_num << ". " << x.ins.showReg(VR)
                         << "\n Mem = " << (x.memLoc != INT_MAX ? to_string(x.memLoc) : "None")
                         << " | Pri = " << (x.priority)
                         << "\" ];" << endl;
@@ -1238,36 +1218,34 @@ struct Graph {
         }
 
     }
+    void createDependenceGraph(InstructionBlock &block, int regNum) {
+
+        int i = 0;
+        for (auto &ins: block.instructions) {
+            ins.line_num = i++;
+            insertNode(ins);
+        }
+
+    }
 
 };
 
-Graph createDependenceGraph(InstructionBlock &block, int regNum) {
 
-    Graph dg(block.instructions.size(), regNum);
-    int i = 0;
-    for (auto &ins: block.instructions) {
-        ins.line_num = i++;
-        dg.insertNode(ins);
-//        dg.show();
-
-    }
-    return dg;
-}
 
 void schedule(InstructionBlock &block, int regNum, string gFileName) {
+    Graph dg(block.instructions.size(), regNum);
 
-    Graph dg(createDependenceGraph(block, regNum));
-    list <pair<InstructionIR, InstructionIR>> newSchedule;
+    dg.createDependenceGraph(block, regNum);
 
     dg.computePriority();
 
     dg.proveDifAddress();
 
 
-    dg.show("./graphviz/g_" +
-            gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
+//    dg.show("./graphviz/g_" +
+//            gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
 
-    newSchedule = dg.schedule();
+    list <pair<InstructionIR, InstructionIR>> newSchedule = dg.schedule();
 
     for (const auto &ins: newSchedule) {
         cout << "[" << ins.first.showReg(VR) << "; " << ins.second.showReg(VR) << "]" << endl;
