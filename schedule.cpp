@@ -1045,11 +1045,11 @@ struct Graph {
 //        cout<<"Const Prop: "<< insId<<endl;
 
         if( nodes[insId].ins.opcode == load && nodes[insId].memLoc == INT_MAX){
+//            cout<< nodes[insId].ins.line_num<< OperationStr[nodes[insId].ins.opcode]<<"==== "<<useDef.first.front()<<endl;
             fakeAddrMap[insId] = vrConst[useDef.first.front()];
-//            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.front()<<endl;
             return;
         }else if( nodes[insId].ins.opcode == store && nodes[insId].memLoc == INT_MAX){
-//            cout<< OperationStr[nodes[insId].ins->opcode]<<"==== "<<useDef.first.back()<<endl;
+//            cout<< nodes[insId].ins.line_num<<OperationStr[nodes[insId].ins.opcode]<<"==== "<<useDef.first.back()<<endl;
             fakeAddrMap[insId] = vrConst[useDef.first.back()];
             return;
         }
@@ -1108,7 +1108,6 @@ struct Graph {
     // Prove Different MemLoc
     void proveDifAddress(){
         // Prove that unknown addresses are different and cut dependency graph
-        Edge edge;
 
         for(auto &loadId: unknownLoadList){
             unordered_map<int, int> fakeAddrMap; // key - insId, value - fakeMem
@@ -1117,28 +1116,46 @@ struct Graph {
             vrConst[ nodes[loadId].ins.registers[R3][VR] ] = 1111111;
 
 
-//            cout<<"FAKE PROPAGATION***********************************"<<endl;
+//            cout<<"FAKE PROPAGATION*********************************** "<< loadId<<endl;
             for(const auto &edgeO: nodes[loadId].edgeOut){
                 fakePropagation( edgeO.second.to, fakeAddrMap);
             }
+//
+//            for(auto &x: vrConst){
+//                cout<< x <<endl;
+//            }
+
+
+
+
+
+
 
             for(const auto &fakeAddr: fakeAddrMap){
 
-                for(const auto &edgeI: nodes[fakeAddr.first].edgeIn){
-                    if(edgeI.second.typeIO == true){
+                for(auto edgeI: nodes[fakeAddr.first].edgeIn){
 //                    cout<<"----"<<endl;
 //                    cout<<fakeAddr.first<<" _ "<<fakeAddr.second<<endl;
 
-//                    cout<<"\t"<< fakeAddr.second <<" | map = "<< fakeAddrMap[edge.from]<<endl;
+
+                    if(edgeI.second.typeIO == true){
+//                        cout<<"\t"<< fakeAddr.second <<" | map = "<< fakeAddrMap[edgeI.second.from]<<endl;
 
                         if(fakeAddrMap.count(edgeI.second.from) && fakeAddr.second != fakeAddrMap[edgeI.second.from]){ //delete IO
-//                        cout<<" Delete : "<<edge.show()<<endl;
+//                        cout<<" Delete : "<<edgeI.first<<"- sec "<<edgeI.second.show()<<endl;
 
-                            nodes[edge.from].edgeOut.erase(edgeI.first);
-                            nodes[edge.from].edgeIn.erase(edgeI.first);
+//                            for(auto x: nodes[edgeI.second.from].edgeOut)
+//                                cout<<edgeI.second.from<<" | "<< x.first<<"->> "<<x.second.show()<<endl;
+//
+//                            for(auto x: nodes[edgeI.second.to].edgeIn)
+//                                cout<<edgeI.second.to<<" | "<< x.first<<"<<-- "<<x.second.show()<<endl;
+
+                            nodes[edgeI.second.from].edgeOut.erase(edgeI.first);
+                            nodes[edgeI.second.to].edgeIn.erase(edgeI.first);
 
 
-                            createFakeEdge(fakeAddr, edge, fakeAddrMap);
+                            createFakeEdge(fakeAddr, edgeI.second, fakeAddrMap);
+                            break;
                         }
                     }
                 }
@@ -1146,18 +1163,10 @@ struct Graph {
 
 
 
-//                if(nodes[fakeAddr.first].edge)
             }
-//            cout<<"1 VR const : "<<loadId<<" | " << nodes[loadId].ins->showReg(VR) <<endl;
-//            for(auto &x: vrConst){
-//                cout<< x<<endl;
-//            }
 
             cleanPropagation();
-//            cout<<"************fakeAddrMap"<<endl;
-//            for(const auto &x: fakeAddrMap){
-//                cout<<x.first<<" | "<<x.second<<endl;
-//            }
+
 
         }
 
