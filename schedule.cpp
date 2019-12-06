@@ -581,16 +581,20 @@ struct Edge {
     }
     bool operator ==(const Edge &edgeOther){
         if(from == edgeOther.from && to == edgeOther.to &&
-            weight == edgeOther.weight && typeIO == edgeOther.typeIO){
+           weight == edgeOther.weight && typeIO == edgeOther.typeIO){
             return true;
         }
         return false;
     }
 };
 
+int myHash(int a, int b){
+    return (a<<16) + b;
+}
+
 struct Node {
-    list <Edge> edgeOut;
-    list <Edge> edgeIn;
+    unordered_map <int, Edge> edgeOut;
+    unordered_map <int,Edge> edgeIn;
 
     int id;
     InstructionIR ins;
@@ -607,29 +611,48 @@ struct Node {
     }
 
     void insertEdgeIn(Edge edge) {
-        for (auto &x: edgeIn) {
-            if (x.from == edge.from && x.to == edge.to) {
-                if (x.weight < edge.weight) {
-                    x.weight = edge.weight;
-                    x.typeIO = edge.typeIO;
-                }
-                return;
+//        for (auto &x: edgeIn) {
+//            if (x.from == edge.from && x.to == edge.to) {
+//                if (x.weight < edge.weight) {
+//                    x.weight = edge.weight;
+//                    x.typeIO = edge.typeIO;
+//                }
+//                return;
+//            }
+//        }
+//        edgeIn.push_back(edge);
+
+        if (edgeIn.count(myHash(edge.from, edge.to)) != 0){
+            if(edgeIn[myHash(edge.from, edge.to)].weight < edge.weight){
+                edgeIn[myHash(edge.from, edge.to)].weight = edge.weight;
+                edgeIn[myHash(edge.from, edge.to)].typeIO = edge.typeIO;
             }
+            return;
         }
-        edgeIn.push_back(edge);
+        edgeIn[myHash(edge.from, edge.to)] = edge;
     }
 
     void insertEdgeOut(Edge edge) {
-        for (auto &x: edgeOut) {
-            if (x.from == edge.from && x.to == edge.to) {
-                if (x.weight < edge.weight) {
-                    x.weight = edge.weight;
-                    x.typeIO = edge.typeIO;
-                }
-                return;
+//        for (auto &x: edgeOut) {
+//            if (x.from == edge.from && x.to == edge.to) {
+//                if (x.weight < edge.weight) {
+//                    x.weight = edge.weight;
+//                    x.typeIO = edge.typeIO;
+//                }
+//                return;
+//            }
+//        }
+//        edgeOut.push_back(edge);
+
+        if (edgeOut.count(myHash(edge.from, edge.to)) != 0){
+            if(edgeOut[myHash(edge.from, edge.to)].weight < edge.weight){
+                edgeOut[myHash(edge.from, edge.to)].weight = edge.weight;
+                edgeOut[myHash(edge.from, edge.to)].typeIO = edge.typeIO;
             }
+            return;
         }
-        edgeOut.push_back(edge);
+        edgeOut[myHash(edge.from, edge.to)] = edge;
+        return;
     }
 };
 
@@ -648,6 +671,7 @@ struct Graph {
     Graph(int insNum, int regNum) : nodes(insNum), regToNode(regNum), vrConst(regNum, INT_MAX), vrLatency(regNum){}
 
     void insertEdge(Edge edge) {
+//        cout<<edge.show()<<endl;
         nodes[edge.from].insertEdgeOut(edge);
         nodes[edge.to].insertEdgeIn(edge);
     }
@@ -845,8 +869,8 @@ struct Graph {
             while (!qmin.empty()) {
                 nodeMin = qmin.getMin();
 
-                for (const auto &edge: nodes[nodeMin.second].edgeIn) {
-                    relax(edge, qmin);
+                for (const auto &edgeI: nodes[nodeMin.second].edgeIn) {
+                    relax(edgeI.second, qmin);
                 }
             }
         }
@@ -979,8 +1003,8 @@ struct Graph {
             currentIns = make_pair(InstructionIR(cycle, nop), InstructionIR(cycle, nop));
 
             if (twoInsIds.first != INT_MAX) {
-                for(const auto &edge: nodes[twoInsIds.first].edgeOut){
-                    qActive.insertKey(cycle + edge.weight, edge.to);
+                for(const auto &edgeO: nodes[twoInsIds.first].edgeOut){
+                    qActive.insertKey(cycle + edgeO.second.weight, edgeO.second.to);
                 }
 //                qActive.insertKey(cycle + nodes[twoInsIds.first].latency, twoInsIds.first);
                 qReady.erase(twoInsIds.first);
@@ -988,8 +1012,8 @@ struct Graph {
             }
 
             if (twoInsIds.second != INT_MAX) {
-                for(const auto &edge: nodes[twoInsIds.second].edgeOut){
-                    qActive.insertKey(cycle + edge.weight, edge.to);
+                for(const auto &edgeO: nodes[twoInsIds.second].edgeOut){
+                    qActive.insertKey(cycle + edgeO.second.weight, edgeO.second.to);
                 }
 //                qActive.insertKey(cycle + nodes[twoInsIds.second].latency, twoInsIds.second);
                 qReady.erase(twoInsIds.second);
@@ -1038,32 +1062,15 @@ struct Graph {
 //        }
 
 
-        for(const auto &edge: nodes[insId].edgeOut){
+        for(const auto &edgeO: nodes[insId].edgeOut){
             if( succPropagation == true ){    //todo: Include this when all work
-                fakePropagation( edge.to, fakeAddrMap);
+                fakePropagation( edgeO.second.to, fakeAddrMap);
             }
         }
         return;
     }
 
-    void deleteEdge(Edge edge){
 
-        for(auto rit = nodes[edge.from].edgeOut.rbegin(); rit != nodes[edge.from].edgeOut.rend(); rit++){
-//            cout<<"Out: "<<(*rit).show()<<endl;
-            if((*rit) == edge){
-                nodes[edge.from].edgeOut.erase(--(rit.base()));
-                break;
-            }
-        }
-
-        for(auto rit = nodes[edge.to].edgeIn.rbegin(); rit != nodes[edge.to].edgeIn.rend(); rit++){
-//            cout<<"In: "<<(*rit).show()<<endl;
-            if((*rit) == edge){
-                nodes[edge.to].edgeIn.erase(--(rit.base()));
-                break;
-            }
-        }
-    }
 
     void createFakeEdge(pair<int, int> fakeAddr, Edge edge, unordered_map<int, int> &fakeAddrMap){
         auto rit = find_if(listIO.rbegin(), listIO.rend(), [x=edge.from](array<int, 3> io) { return io[0] == x; });
@@ -1103,26 +1110,6 @@ struct Graph {
         // Prove that unknown addresses are different and cut dependency graph
         Edge edge;
 
-
-
-//        cout<< "listIO"<<endl;
-//        for(const auto &x: listIO){
-//            cout<<x[0]<<", "<<x[1]<<", "<<x[2]<<" "<<endl;
-//        }
-
-
-//        cout<<" unknownLoadList "<<endl;
-//        for(auto &x: unknownLoadList){
-//            cout<< x<<endl;
-//        }
-
-
-//        cout<<"0 VR const : "<<endl;
-//        for(auto &x: vrConst){
-//            cout<< x<<endl;
-//        }
-//        cout<<" Un Initialized Load"<<endl;
-
         for(auto &loadId: unknownLoadList){
             unordered_map<int, int> fakeAddrMap; // key - insId, value - fakeMem
 
@@ -1131,31 +1118,32 @@ struct Graph {
 
 
 //            cout<<"FAKE PROPAGATION***********************************"<<endl;
-            for(const auto &edge: nodes[loadId].edgeOut){
-                fakePropagation( edge.to, fakeAddrMap);
+            for(const auto &edgeO: nodes[loadId].edgeOut){
+                fakePropagation( edgeO.second.to, fakeAddrMap);
             }
-            
+
             for(const auto &fakeAddr: fakeAddrMap){
 
-                edge = nodes[fakeAddr.first].edgeIn.back();
-                if(edge.typeIO == true){
+                for(const auto &edgeI: nodes[fakeAddr.first].edgeIn){
+                    if(edgeI.second.typeIO == true){
 //                    cout<<"----"<<endl;
 //                    cout<<fakeAddr.first<<" _ "<<fakeAddr.second<<endl;
 
 //                    cout<<"\t"<< fakeAddr.second <<" | map = "<< fakeAddrMap[edge.from]<<endl;
 
-                    if(fakeAddrMap.count(edge.from) && fakeAddr.second != fakeAddrMap[edge.from]){ //delete IO
+                        if(fakeAddrMap.count(edgeI.second.from) && fakeAddr.second != fakeAddrMap[edgeI.second.from]){ //delete IO
 //                        cout<<" Delete : "<<edge.show()<<endl;
 
-                        deleteEdge(edge);
-                        createFakeEdge(fakeAddr, edge, fakeAddrMap);
+                            nodes[edge.from].edgeOut.erase(edgeI.first);
+                            nodes[edge.from].edgeIn.erase(edgeI.first);
 
 
-
+                            createFakeEdge(fakeAddr, edge, fakeAddrMap);
+                        }
                     }
-
-
                 }
+
+
 
 
 //                if(nodes[fakeAddr.first].edge)
@@ -1192,8 +1180,8 @@ struct Graph {
                         << " | Pri = " << (x.priority)
                         << "\" ];" << endl;
 
-            for (const auto &e: x.edgeOut)
-                edge_stream << e.show() << endl;
+            for (const auto &edgeO: x.edgeOut)
+                edge_stream << edgeO.second.show() << endl;
         }
         node_stream << edge_stream.str();
         node_stream << "}" << endl;
@@ -1242,8 +1230,8 @@ void schedule(InstructionBlock &block, int regNum, string gFileName) {
     dg.proveDifAddress();
 
 
-//    dg.show("./graphviz/g_" +
-//            gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
+    dg.show("./graphviz/g_" +
+            gFileName.substr(gFileName.find("/") + 1, gFileName.find(".i") - (gFileName.find("/") + 1)) + ".txt");
 
     list <pair<InstructionIR, InstructionIR>> newSchedule = dg.schedule();
 
@@ -1251,15 +1239,6 @@ void schedule(InstructionBlock &block, int regNum, string gFileName) {
         cout << "[" << ins.first.showReg(VR) << "; " << ins.second.showReg(VR) << "]" << endl;
     }
 }
-
-
-
-
-
-
-
-
-
 
 
 
